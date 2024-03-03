@@ -8,9 +8,15 @@
 
 #![no_std]
 #![no_main]
+mod gcc_hid;
+
+use gcc_hid::{GcConfig, GcReport};
+
+use fugit::ExtU32;
 
 // Ensure we halt the program on panic (if we don't mention this crate it won't
 // be linked)
+use defmt_rtt as _;
 use panic_halt as _;
 
 // Alias for our HAL crate
@@ -21,7 +27,12 @@ use rp2040_hal as hal;
 use hal::pac;
 
 // Some traits we need
-use embedded_hal::{blocking::delay::DelayMs, digital::v2::OutputPin};
+use embedded_hal::{digital::v2::OutputPin, timer::CountDown};
+use usb_device::{
+    bus::UsbBusAllocator,
+    device::{UsbDeviceBuilder, UsbVidPid},
+};
+use usbd_human_interface_device::{usb_class::UsbHidClassBuilder, UsbHidError};
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -63,7 +74,10 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let mut timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
+    let timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
+
+    let mut poll_timer = timer.count_down();
+    poll_timer.start(10.millis());
 
     // The single-cycle I/O block controls our GPIO pins
     let sio = hal::Sio::new(pac.SIO);
@@ -76,12 +90,53 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
+    let mut gcc_state = GcReport::default();
+
+    // usb parts
+    let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
+        pac.USBCTRL_REGS,
+        pac.USBCTRL_DPRAM,
+        clocks.usb_clock,
+        true,
+        &mut pac.RESETS,
+    ));
+
+    let mut gcc = UsbHidClassBuilder::new()
+        .add_device(GcConfig::default())
+        .build(&usb_bus);
+
+    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x057e, 0x0337))
+        .manufacturer("Naxdy")
+        .product("NaxGCC")
+        .device_class(0)
+        .device_protocol(0)
+        .device_sub_class(0)
+        .self_powered(false)
+        .max_power(500)
+        .max_packet_size_0(64)
+        .build();
+
     // Configure GPIO25 as an output
     let mut led_pin = pins.gpio25.into_push_pull_output();
     loop {
-        led_pin.set_high().unwrap();
-        timer.delay_ms(500);
-        led_pin.set_low().unwrap();
-        timer.delay_ms(500);
+        if poll_timer.wait().is_ok() {
+            match gcc.device().write_report(&gcc_state) {
+                Err(UsbHidError::WouldBlock) => {}
+                Ok(_) => {}
+                Err(e) => {
+                    panic!("Error: {:?}", e);
+                }
+            }
+
+            gcc_state.buttons_1.button_a = !gcc_state.buttons_1.button_a;
+
+            if gcc_state.buttons_1.button_a {
+                led_pin.set_high().unwrap();
+            } else {
+                led_pin.set_low().unwrap();
+            }
+        }
+
+        if usb_dev.poll(&mut [&mut gcc]) {}
     }
 }

@@ -83,7 +83,7 @@
       devShells.default = pkgs.mkShell {
         nativeBuildInputs = builtins.attrValues {
           inherit rustToolchain;
-          inherit (pkgs) gcc-arm-embedded flip-link elf2uf2-rs;
+          inherit (pkgs) gcc-arm-embedded flip-link elf2uf2-rs picotool;
         };
 
         inherit RUSTFLAGS CARGO_BUILD_TARGET;
