@@ -10,6 +10,8 @@
 #![no_main]
 mod gcc_hid;
 
+use core::fmt::Write;
+use defmt::{error, info, Debug2Format};
 use gcc_hid::{GcConfig, GcReport};
 
 use fugit::ExtU32;
@@ -24,10 +26,15 @@ use rp2040_hal as hal;
 
 // A shorter alias for the Peripheral Access Crate, which provides low-level
 // register access
-use hal::pac;
+use hal::{
+    gpio::FunctionUart,
+    pac,
+    uart::{UartConfig, UartPeripheral},
+};
 
 // Some traits we need
-use embedded_hal::{digital::v2::OutputPin, timer::CountDown};
+use embedded_hal::{blocking::delay::DelayMs, digital::v2::OutputPin, timer::CountDown};
+use rp2040_hal::Clock;
 use usb_device::{
     bus::UsbBusAllocator,
     device::{UsbDeviceBuilder, UsbVidPid},
@@ -74,7 +81,7 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
+    let mut timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
 
     let mut poll_timer = timer.count_down();
     poll_timer.start(10.millis());
@@ -108,6 +115,7 @@ fn main() -> ! {
     let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x057e, 0x0337))
         .manufacturer("Naxdy")
         .product("NaxGCC")
+        .serial_number("fleeb")
         .device_class(0)
         .device_protocol(0)
         .device_sub_class(0)
@@ -116,24 +124,33 @@ fn main() -> ! {
         .max_packet_size_0(64)
         .build();
 
+    let mut uart = UartPeripheral::new(
+        pac.UART0,
+        (
+            pins.gpio0.into_mode::<FunctionUart>(),
+            pins.gpio1.into_mode(),
+        ),
+        &mut pac.RESETS,
+    )
+    .enable(UartConfig::default(), clocks.peripheral_clock.freq())
+    .unwrap();
+
+    gcc_state.buttons_1.button_a = true;
+
     // Configure GPIO25 as an output
     let mut led_pin = pins.gpio25.into_push_pull_output();
+    info!("Bleg");
+    let _ = uart.write_str("FLAR");
     loop {
         if poll_timer.wait().is_ok() {
             match gcc.device().write_report(&gcc_state) {
                 Err(UsbHidError::WouldBlock) => {}
                 Ok(_) => {}
                 Err(e) => {
-                    panic!("Error: {:?}", e);
+                    led_pin.set_high().unwrap();
+                    error!("Error: {:?}", Debug2Format(&e));
+                    panic!();
                 }
-            }
-
-            gcc_state.buttons_1.button_a = !gcc_state.buttons_1.button_a;
-
-            if gcc_state.buttons_1.button_a {
-                led_pin.set_high().unwrap();
-            } else {
-                led_pin.set_low().unwrap();
             }
         }
 

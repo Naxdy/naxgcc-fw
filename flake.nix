@@ -83,8 +83,11 @@
       devShells.default = pkgs.mkShell {
         nativeBuildInputs = builtins.attrValues {
           inherit rustToolchain;
-          inherit (pkgs) gcc-arm-embedded flip-link elf2uf2-rs picotool;
+          inherit (pkgs) gcc-arm-embedded flip-link elf2uf2-rs picotool probe-rs;
         };
+
+        CARGO_TARGET_THUMBV6M_NONE_EABI_RUNNER = "probe-rs run --chip RP2040 --protocol swd";
+        DEFMT_LOG = "trace";
 
         inherit RUSTFLAGS CARGO_BUILD_TARGET;
       };

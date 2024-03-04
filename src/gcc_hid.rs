@@ -1,6 +1,6 @@
 use core::default::Default;
 
-use defmt::unwrap;
+use defmt::{error, info, unwrap};
 use packed_struct::{derive::PackedStruct, prelude::packed_bits, types::Integer, PackedStruct};
 use usb_device::bus::{UsbBus, UsbBusAllocator};
 use usbd_human_interface_device::{
@@ -169,10 +169,16 @@ pub struct GcController<'a, B: UsbBus> {
 impl<'a, B: UsbBus> GcController<'a, B> {
     pub fn write_report(&mut self, report: &GcReport) -> Result<(), UsbHidError> {
         let report = get_gcinput_hid_report(report);
+        // print report as binary
+        info!("Report: {:08b}", report);
+
         self.interface
             .write_report(&report)
             .map(|_| ())
-            .map_err(UsbHidError::from)
+            .map_err(|e| {
+                error!("Found an error: {:?}", e);
+                UsbHidError::from(e)
+            })
     }
 }
 
@@ -199,6 +205,8 @@ fn get_gcinput_hid_report(input_state: &GcReport) -> [u8; 37] {
 
     let data = input_state.pack().expect("Failed to pack GC input data");
 
+    info!("Packed data: {:08b}", data);
+
     if unsafe { !GC_FIRST } {
         buffer[1] |= 0x04;
         buffer[10] |= 0x04;
@@ -207,7 +215,7 @@ fn get_gcinput_hid_report(input_state: &GcReport) -> [u8; 37] {
         unsafe { GC_FIRST = true };
     } else {
         // controller in "port 1"
-        buffer[2..=10].copy_from_slice(&data[0..=8]);
+        buffer[2..=9].copy_from_slice(&data[0..=7]);
     }
 
     buffer
