@@ -7,7 +7,7 @@ use usbd_human_interface_device::{
     descriptor::InterfaceProtocol,
     device::DeviceClass,
     interface::{
-        InBytes8, Interface, InterfaceBuilder, InterfaceConfig, OutNone, ReportSingle,
+        InBytes64, InBytes8, Interface, InterfaceBuilder, InterfaceConfig, OutNone, ReportSingle,
         UsbAllocatable,
     },
     UsbHidError,
@@ -73,69 +73,69 @@ pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct)]
-#[packed_struct(endian = "msb", size_bytes = "1")]
+#[packed_struct(bit_numbering = "lsb0", size_bytes = "1")]
 pub struct Buttons1 {
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "0")]
     pub button_a: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "1")]
     pub button_b: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "2")]
     pub button_x: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "3")]
     pub button_y: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "4")]
     pub dpad_left: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "5")]
     pub dpad_right: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "6")]
     pub dpad_down: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "7")]
     pub dpad_up: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct)]
-#[packed_struct(endian = "msb", size_bytes = "1")]
+#[packed_struct(bit_numbering = "lsb0", size_bytes = "1")]
 pub struct Buttons2 {
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "0")]
     pub button_start: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "1")]
     pub button_z: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "2")]
     pub button_r: bool,
-    #[packed_field(size_bits = "1")]
+    #[packed_field(bits = "3")]
     pub button_l: bool,
-    #[packed_field(size_bits = "4")]
+    #[packed_field(bits = "4..=7")]
     pub blank1: Integer<u8, packed_bits::Bits<4>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct)]
-#[packed_struct(endian = "msb", size_bytes = "8")]
+#[packed_struct(bit_numbering = "msb0", size_bytes = "8")]
 pub struct GcReport {
-    #[packed_field(size_bits = "8")]
+    #[packed_field(bits = "0..=7")]
     pub buttons_1: Buttons1,
-    #[packed_field(size_bits = "8")]
+    #[packed_field(bits = "8..=15")]
     pub buttons_2: Buttons2,
-    #[packed_field(size_bits = "8")]
+    #[packed_field(bits = "16..=23")]
     pub stick_x: u8,
-    #[packed_field(size_bits = "8")]
+    #[packed_field(bits = "24..=31")]
     pub stick_y: u8,
-    #[packed_field(size_bits = "8")]
+    #[packed_field(bits = "32..=39")]
     pub cstick_x: u8,
-    #[packed_field(size_bits = "8")]
+    #[packed_field(bits = "40..=47")]
     pub cstick_y: u8,
-    #[packed_field(size_bits = "8")]
+    #[packed_field(bits = "48..=55")]
     pub trigger_l: u8,
-    #[packed_field(size_bits = "8")]
+    #[packed_field(bits = "56..=63")]
     pub trigger_r: u8,
 }
 
 pub struct GcConfig<'a> {
-    interface: InterfaceConfig<'a, InBytes8, OutNone, ReportSingle>,
+    interface: InterfaceConfig<'a, InBytes64, OutNone, ReportSingle>,
 }
 
 impl<'a> GcConfig<'a> {
     #[must_use]
-    pub fn new(interface: InterfaceConfig<'a, InBytes8, OutNone, ReportSingle>) -> Self {
+    pub fn new(interface: InterfaceConfig<'a, InBytes64, OutNone, ReportSingle>) -> Self {
         Self { interface }
     }
 }
@@ -146,7 +146,7 @@ impl<'a> Default for GcConfig<'a> {
         let i = unwrap!(unwrap!(InterfaceBuilder::new(GCC_REPORT_DESCRIPTOR))
             .boot_device(InterfaceProtocol::None)
             .description("NaxGCC")
-            .in_endpoint(10.millis()));
+            .in_endpoint(1.millis()));
 
         Self::new(i.without_out_endpoint().build())
     }
@@ -163,27 +163,25 @@ impl<'a, B: UsbBus + 'a> UsbAllocatable<'a, B> for GcConfig<'a> {
 }
 
 pub struct GcController<'a, B: UsbBus> {
-    interface: Interface<'a, B, InBytes8, OutNone, ReportSingle>,
+    interface: Interface<'a, B, InBytes64, OutNone, ReportSingle>,
 }
 
 impl<'a, B: UsbBus> GcController<'a, B> {
     pub fn write_report(&mut self, report: &GcReport) -> Result<(), UsbHidError> {
         let report = get_gcinput_hid_report(report);
         // print report as binary
+
         info!("Report: {:08b}", report);
 
         self.interface
             .write_report(&report)
             .map(|_| ())
-            .map_err(|e| {
-                error!("Found an error: {:?}", e);
-                UsbHidError::from(e)
-            })
+            .map_err(|e| UsbHidError::from(e))
     }
 }
 
 impl<'a, B: UsbBus> DeviceClass<'a> for GcController<'a, B> {
-    type I = Interface<'a, B, InBytes8, OutNone, ReportSingle>;
+    type I = Interface<'a, B, InBytes64, OutNone, ReportSingle>;
 
     fn interface(&mut self) -> &mut Self::I {
         &mut self.interface
@@ -202,10 +200,9 @@ fn get_gcinput_hid_report(input_state: &GcReport) -> [u8; 37] {
     let mut buffer = [0u8; 37];
 
     buffer[0] = 0x21;
+    buffer[1] |= 0x14;
 
     let data = input_state.pack().expect("Failed to pack GC input data");
-
-    info!("Packed data: {:08b}", data);
 
     if unsafe { !GC_FIRST } {
         buffer[1] |= 0x04;

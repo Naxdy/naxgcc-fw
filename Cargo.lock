@@ -269,6 +269,7 @@ dependencies = [
  "panic-halt",
  "panic-probe",
  "rp2040-boot2",
+ "rp2040-flash",
  "rp2040-hal",
  "usb-device",
  "usbd-human-interface-device",
@@ -449,6 +450,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c92f344f63f950ee36cf4080050e4dce850839b9175da38f9d2ffb69b4dbb21"
 dependencies = [
  "crc-any",
+]
+
+[[package]]
+name = "rp2040-flash"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2007f9701924b88cbffc172cdf09e01b9c03ecd0b2f59bc6eea5283982855438"
+dependencies = [
+ "rp2040-hal",
 ]
 
 [[package]]

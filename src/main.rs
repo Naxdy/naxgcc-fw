@@ -8,6 +8,7 @@
 
 #![no_std]
 #![no_main]
+mod flash_mem;
 mod gcc_hid;
 
 use core::fmt::Write;
@@ -19,6 +20,7 @@ use fugit::ExtU32;
 // Ensure we halt the program on panic (if we don't mention this crate it won't
 // be linked)
 use defmt_rtt as _;
+use packed_struct::PackedStruct;
 use panic_halt as _;
 
 // Alias for our HAL crate
@@ -33,13 +35,19 @@ use hal::{
 };
 
 // Some traits we need
-use embedded_hal::{blocking::delay::DelayMs, digital::v2::OutputPin, timer::CountDown};
+use embedded_hal::{
+    blocking::delay::DelayMs,
+    digital::v2::{InputPin, OutputPin},
+    timer::CountDown,
+};
 use rp2040_hal::Clock;
 use usb_device::{
     bus::UsbBusAllocator,
-    device::{UsbDeviceBuilder, UsbVidPid},
+    device::{UsbDeviceBuilder, UsbDeviceState, UsbVidPid},
 };
 use usbd_human_interface_device::{usb_class::UsbHidClassBuilder, UsbHidError};
+
+use crate::flash_mem::{read_from_flash, write_to_flash};
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -84,7 +92,7 @@ fn main() -> ! {
     let mut timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
 
     let mut poll_timer = timer.count_down();
-    poll_timer.start(10.millis());
+    poll_timer.start(1.millis());
 
     // The single-cycle I/O block controls our GPIO pins
     let sio = hal::Sio::new(pac.SIO);
@@ -124,23 +132,26 @@ fn main() -> ! {
         .max_packet_size_0(64)
         .build();
 
-    let mut uart = UartPeripheral::new(
-        pac.UART0,
-        (
-            pins.gpio0.into_mode::<FunctionUart>(),
-            pins.gpio1.into_mode(),
-        ),
-        &mut pac.RESETS,
-    )
-    .enable(UartConfig::default(), clocks.peripheral_clock.freq())
-    .unwrap();
+    gcc_state.stick_x = 0;
+    gcc_state.stick_y = 0;
+    gcc_state.trigger_l = 21;
+    gcc_state.cstick_x = 127;
+    gcc_state.cstick_y = 127;
 
-    gcc_state.buttons_1.button_a = true;
+    let btn_pin = pins.gpio15.into_pull_up_input();
+
+    unsafe {
+        let some_byte: u8 = 0xAB;
+        info!("Byte to be written is {:02X}", some_byte);
+        write_to_flash(some_byte);
+        let r = read_from_flash();
+        info!("Byte read from flash is {:02X}", r);
+    }
+
+    info!("Initialized");
 
     // Configure GPIO25 as an output
     let mut led_pin = pins.gpio25.into_push_pull_output();
-    info!("Bleg");
-    let _ = uart.write_str("FLAR");
     loop {
         if poll_timer.wait().is_ok() {
             match gcc.device().write_report(&gcc_state) {
@@ -153,7 +164,8 @@ fn main() -> ! {
                 }
             }
         }
-
         if usb_dev.poll(&mut [&mut gcc]) {}
+
+        gcc_state.buttons_2.button_start = btn_pin.is_low().unwrap();
     }
 }
