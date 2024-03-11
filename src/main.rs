@@ -118,11 +118,6 @@ fn main() -> ! {
         &mut pac.RESETS,
     ));
 
-    unsafe {
-        let r = read_from_flash();
-        info!("Byte read from flash is {:02X}", r);
-    }
-
     let mut mc = Multicore::new(&mut pac.PSM, &mut pac.PPB, &mut sio.fifo);
     let cores = mc.cores();
     let core1 = &mut cores[1];
@@ -172,15 +167,6 @@ fn main() -> ! {
         Err(e) => {
             error!("SPI transfer failed: {}", e);
         }
-    }
-
-    unsafe {
-        LOCKED = true;
-        timer.delay_ms(100);
-        let some_byte: u8 = 0xAB;
-        info!("Byte to be written is {:02X}", some_byte);
-        write_to_flash(some_byte);
-        LOCKED = false;
     }
 
     input_loop(BasicInputs {
