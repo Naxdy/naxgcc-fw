@@ -7,7 +7,7 @@ use usbd_human_interface_device::{
     descriptor::InterfaceProtocol,
     device::DeviceClass,
     interface::{
-        InBytes64, InBytes8, Interface, InterfaceBuilder, InterfaceConfig, OutNone, ReportSingle,
+        InBytes64, Interface, InterfaceBuilder, InterfaceConfig, OutBytes64, ReportSingle,
         UsbAllocatable,
     },
     UsbHidError,
@@ -129,13 +129,24 @@ pub struct GcReport {
     pub trigger_r: u8,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C, align(8))]
+pub struct RawConsoleReport {
+    pub packet: [u8; 64],
+}
+
+impl Default for RawConsoleReport {
+    fn default() -> Self {
+        Self { packet: [0u8; 64] }
+    }
+}
 pub struct GcConfig<'a> {
-    interface: InterfaceConfig<'a, InBytes64, OutNone, ReportSingle>,
+    interface: InterfaceConfig<'a, InBytes64, OutBytes64, ReportSingle>,
 }
 
 impl<'a> GcConfig<'a> {
     #[must_use]
-    pub fn new(interface: InterfaceConfig<'a, InBytes64, OutNone, ReportSingle>) -> Self {
+    pub fn new(interface: InterfaceConfig<'a, InBytes64, OutBytes64, ReportSingle>) -> Self {
         Self { interface }
     }
 }
@@ -143,12 +154,15 @@ impl<'a> GcConfig<'a> {
 impl<'a> Default for GcConfig<'a> {
     #[must_use]
     fn default() -> Self {
-        let i = unwrap!(unwrap!(InterfaceBuilder::new(GCC_REPORT_DESCRIPTOR))
-            .boot_device(InterfaceProtocol::None)
-            .description("NaxGCC")
-            .in_endpoint(1.millis()));
+        let i = unwrap!(
+            unwrap!(unwrap!(InterfaceBuilder::new(GCC_REPORT_DESCRIPTOR))
+                .boot_device(InterfaceProtocol::None)
+                .description("NaxGCC")
+                .in_endpoint(1.millis()))
+            .with_out_endpoint(1.millis())
+        );
 
-        Self::new(i.without_out_endpoint().build())
+        Self::new(i.build())
     }
 }
 
@@ -163,25 +177,30 @@ impl<'a, B: UsbBus + 'a> UsbAllocatable<'a, B> for GcConfig<'a> {
 }
 
 pub struct GcController<'a, B: UsbBus> {
-    interface: Interface<'a, B, InBytes64, OutNone, ReportSingle>,
+    interface: Interface<'a, B, InBytes64, OutBytes64, ReportSingle>,
 }
 
 impl<'a, B: UsbBus> GcController<'a, B> {
     pub fn write_report(&mut self, report: &GcReport) -> Result<(), UsbHidError> {
         let report = get_gcinput_hid_report(report);
-        // print report as binary
-
-        info!("Report: {:08b}", report);
 
         self.interface
             .write_report(&report)
             .map(|_| ())
             .map_err(|e| UsbHidError::from(e))
     }
+
+    pub fn read_report(&mut self) -> Result<RawConsoleReport, UsbHidError> {
+        let mut report = RawConsoleReport::default();
+        match self.interface.read_report(&mut report.packet) {
+            Err(e) => Err(UsbHidError::from(e)),
+            Ok(_) => Ok(report),
+        }
+    }
 }
 
 impl<'a, B: UsbBus> DeviceClass<'a> for GcController<'a, B> {
-    type I = Interface<'a, B, InBytes64, OutNone, ReportSingle>;
+    type I = Interface<'a, B, InBytes64, OutBytes64, ReportSingle>;
 
     fn interface(&mut self) -> &mut Self::I {
         &mut self.interface

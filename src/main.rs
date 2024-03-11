@@ -164,8 +164,22 @@ fn main() -> ! {
                 }
             }
         }
-        if usb_dev.poll(&mut [&mut gcc]) {}
+        if usb_dev.poll(&mut [&mut gcc]) {
+            match gcc.device().read_report() {
+                Err(UsbHidError::WouldBlock) => {}
+                Err(e) => {
+                    error!("Failed to read report: {:?}", Debug2Format(&e));
+                }
+                Ok(report) => {
+                    info!("Received report: {:08x}", report.packet);
+                    // rumble packet
+                    if report.packet[0] == 0x11 {
+                        info!("Received rumble info: Controller1 ({:08x}) Controller2 ({:08x}) Controller3 ({:08x}) Controller4 ({:08x})", report.packet[1], report.packet[2], report.packet[3], report.packet[4]);
+                    }
+                }
+            }
+        }
 
-        gcc_state.buttons_2.button_start = btn_pin.is_low().unwrap();
+        gcc_state.buttons_2.button_z = btn_pin.is_low().unwrap();
     }
 }
