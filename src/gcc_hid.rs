@@ -1,27 +1,23 @@
 use core::default::Default;
 
-use defmt::{error, info, unwrap, Debug2Format, Format};
-use embedded_hal::timer::CountDown as _;
-use fugit::ExtU32;
+use defmt::{debug, error, info, trace, unwrap, warn, Debug2Format, Format};
+use embassy_futures::{
+    join::join,
+    select::{self, select, Either},
+};
+use embassy_rp::{peripherals::USB, usb::Driver};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
+use embassy_time::Duration;
+use embassy_usb::{
+    class::hid::{HidReaderWriter, ReportId, RequestHandler, State},
+    control::OutResponse,
+    Builder, Handler,
+};
 use packed_struct::{derive::PackedStruct, PackedStruct};
-use rp2040_flash::flash::flash_unique_id;
-use rp2040_hal::timer::CountDown;
-use usb_device::{
-    bus::{UsbBus, UsbBusAllocator},
-    device::{UsbDeviceBuilder, UsbVidPid},
-};
-use usbd_human_interface_device::{
-    descriptor::InterfaceProtocol,
-    device::DeviceClass,
-    interface::{
-        InBytes64, Interface, InterfaceBuilder, InterfaceConfig, OutBytes64, ReportSingle,
-        UsbAllocatable,
-    },
-    usb_class::UsbHidClassBuilder,
-    UsbHidError,
-};
+use portable_atomic::Ordering;
 
-use crate::{input::GCC_STATE, CORE_LOCK, LOCKED};
+use crate::input::GCC_STATE;
 
 #[rustfmt::skip]
 pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
@@ -148,76 +144,27 @@ impl Default for RawConsoleReport {
         Self { packet: [0u8; 64] }
     }
 }
-pub struct GcConfig<'a> {
-    interface: InterfaceConfig<'a, InBytes64, OutBytes64, ReportSingle>,
-}
 
-impl<'a> GcConfig<'a> {
-    #[must_use]
-    pub fn new(interface: InterfaceConfig<'a, InBytes64, OutBytes64, ReportSingle>) -> Self {
-        Self { interface }
-    }
-}
+struct GccRequestHandler {}
 
-impl<'a> Default for GcConfig<'a> {
-    #[must_use]
-    fn default() -> Self {
-        let i = unwrap!(
-            unwrap!(unwrap!(InterfaceBuilder::new(GCC_REPORT_DESCRIPTOR))
-                .boot_device(InterfaceProtocol::None)
-                .description("NaxGCC")
-                .in_endpoint(1.millis()))
-            .with_out_endpoint(1.millis())
-        );
-
-        Self::new(i.build())
-    }
-}
-
-impl<'a, B: UsbBus + 'a> UsbAllocatable<'a, B> for GcConfig<'a> {
-    type Allocated = GcController<'a, B>;
-
-    fn allocate(self, usb_alloc: &'a UsbBusAllocator<B>) -> Self::Allocated {
-        Self::Allocated {
-            interface: Interface::new(usb_alloc, self.interface),
-        }
-    }
-}
-
-pub struct GcController<'a, B: UsbBus> {
-    interface: Interface<'a, B, InBytes64, OutBytes64, ReportSingle>,
-}
-
-impl<'a, B: UsbBus> GcController<'a, B> {
-    pub fn write_report(&mut self, report: &GcReport) -> Result<(), UsbHidError> {
-        let report = get_gcinput_hid_report(report);
-
-        self.interface
-            .write_report(&report)
-            .map(|_| ())
-            .map_err(|e| UsbHidError::from(e))
+impl RequestHandler for GccRequestHandler {
+    fn get_report(&self, id: ReportId, _buf: &mut [u8]) -> Option<usize> {
+        info!("Get report for {:?}", id);
+        None
     }
 
-    pub fn read_report(&mut self) -> Result<RawConsoleReport, UsbHidError> {
-        let mut report = RawConsoleReport::default();
-        match self.interface.read_report(&mut report.packet) {
-            Err(e) => Err(UsbHidError::from(e)),
-            Ok(_) => Ok(report),
-        }
-    }
-}
-
-impl<'a, B: UsbBus> DeviceClass<'a> for GcController<'a, B> {
-    type I = Interface<'a, B, InBytes64, OutBytes64, ReportSingle>;
-
-    fn interface(&mut self) -> &mut Self::I {
-        &mut self.interface
+    fn set_report(&self, id: ReportId, data: &[u8]) -> OutResponse {
+        info!("Set report for {:?}: {=[u8]}", id, data);
+        OutResponse::Accepted
     }
 
-    fn reset(&mut self) {}
+    fn set_idle_ms(&self, id: Option<ReportId>, dur: u32) {
+        info!("Set idle rate for {:?} to {:?}", id, dur);
+    }
 
-    fn tick(&mut self) -> Result<(), UsbHidError> {
-        Ok(())
+    fn get_idle_ms(&self, id: Option<ReportId>) -> Option<u32> {
+        info!("Get idle rate for {:?}", id);
+        None
     }
 }
 
@@ -245,80 +192,142 @@ fn get_gcinput_hid_report(input_state: &GcReport) -> [u8; 37] {
     buffer
 }
 
-pub fn usb_transfer_loop<'a, T: UsbBus>(
-    usb_bus: UsbBusAllocator<T>,
-    mut poll_timer: CountDown<'a>,
-) -> ! {
-    // let mut serial_buffer = [0u8; 64];
+struct MyDeviceHandler {
+    configured: bool,
+}
 
-    // let serial = unsafe {
-    //     let mut id = [0u8; 8];
+impl MyDeviceHandler {
+    fn new() -> Self {
+        MyDeviceHandler { configured: false }
+    }
+}
 
-    //     flash_unique_id(&mut id, true);
-
-    //     let s = format_no_std::show(
-    //         &mut serial_buffer,
-    //         format_args!(
-    //             "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-    //             id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7]
-    //         ),
-    //     )
-    //     .unwrap();
-
-    //     info!("Detected flash with unique serial number {}", s);
-
-    //     s
-    // };
-
-    let mut gcc = UsbHidClassBuilder::new()
-        .add_device(GcConfig::default())
-        .build(&usb_bus);
-
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x057e, 0x0337))
-        .manufacturer("Naxdy")
-        .product("NaxGCC")
-        .serial_number("flarn")
-        .device_class(0)
-        .device_protocol(0)
-        .device_sub_class(0)
-        .self_powered(false)
-        .max_power(500)
-        .max_packet_size_0(64)
-        .build();
-
-    poll_timer.start(1.millis());
-
-    info!("Got here");
-
-    loop {
-        if unsafe { LOCKED } {
-            continue;
-        }
-
-        if poll_timer.wait().is_ok() {
-            match gcc.device().write_report(&(unsafe { GCC_STATE })) {
-                Err(UsbHidError::WouldBlock) => {}
-                Ok(_) => {}
-                Err(e) => {
-                    error!("Error: {:?}", Debug2Format(&e));
-                    panic!();
-                }
-            }
-        }
-        if usb_dev.poll(&mut [&mut gcc]) {
-            match gcc.device().read_report() {
-                Err(UsbHidError::WouldBlock) => {}
-                Err(e) => {
-                    error!("Failed to read report: {:?}", Debug2Format(&e));
-                }
-                Ok(report) => {
-                    info!("Received report: {:08x}", report.packet);
-                    // rumble packet
-                    if report.packet[0] == 0x11 {
-                        info!("Received rumble info: Controller1 ({:08x}) Controller2 ({:08x}) Controller3 ({:08x}) Controller4 ({:08x})", report.packet[1], report.packet[2], report.packet[3], report.packet[4]);
-                    }
-                }
-            }
+impl Handler for MyDeviceHandler {
+    fn enabled(&mut self, enabled: bool) {
+        self.configured = true;
+        if enabled {
+            info!("Device enabled");
+        } else {
+            info!("Device disabled");
         }
     }
+
+    fn reset(&mut self) {
+        self.configured = false;
+        info!("Bus reset, the Vbus current limit is 100mA");
+    }
+
+    fn addressed(&mut self, addr: u8) {
+        self.configured = false;
+        info!("USB address set to: {}", addr);
+    }
+
+    fn configured(&mut self, configured: bool) {
+        self.configured = configured;
+        if configured {
+            info!(
+                "Device configured, it may now draw up to the configured current limit from Vbus."
+            )
+        } else {
+            info!("Device is no longer configured, the Vbus current limit is 100mA.");
+        }
+    }
+}
+
+#[embassy_executor::task]
+pub async fn usb_transfer_loop(driver: Driver<'static, USB>) {
+    debug!("Start of config");
+    let mut usb_config = embassy_usb::Config::new(0x057e, 0x0337);
+    usb_config.manufacturer = Some("Naxdy");
+    usb_config.product = Some("NaxGCC");
+    usb_config.serial_number = Some("Fleeb");
+    usb_config.max_power = 100;
+    usb_config.max_packet_size_0 = 64;
+    usb_config.device_class = 0;
+    usb_config.device_protocol = 0;
+    usb_config.self_powered = false;
+    usb_config.device_sub_class = 0;
+    usb_config.supports_remote_wakeup = false;
+
+    let mut device_descriptor = [0; 256];
+    let mut config_descriptor = [0; 256];
+    let mut bos_descriptor = [0; 256];
+    let mut msos_descriptor = [0; 256];
+    let mut control_buf = [0; 64];
+
+    let request_handler = GccRequestHandler {};
+    let mut device_handler = MyDeviceHandler::new();
+
+    let mut state = State::new();
+
+    let mut builder = Builder::new(
+        driver,
+        usb_config,
+        &mut device_descriptor,
+        &mut config_descriptor,
+        &mut bos_descriptor,
+        &mut msos_descriptor,
+        &mut control_buf,
+    );
+
+    builder.handler(&mut device_handler);
+
+    let hid_config = embassy_usb::class::hid::Config {
+        report_descriptor: GCC_REPORT_DESCRIPTOR,
+        request_handler: Some(&request_handler),
+        poll_ms: 1,
+        max_packet_size: 64,
+    };
+    let hid = HidReaderWriter::<_, 5, 37>::new(&mut builder, &mut state, hid_config);
+
+    let mut usb = builder.build();
+
+    let usb_fut = async {
+        loop {
+            usb.run_until_suspend().await;
+            debug!("Suspended");
+            usb.wait_resume().await;
+            debug!("RESUMED!");
+        }
+    };
+
+    let (mut reader, mut writer) = hid.split();
+    debug!("In here");
+
+    let mut timer = embassy_time::Ticker::every(Duration::from_millis(1));
+
+    let in_fut = async {
+        loop {
+            let state = unsafe { GCC_STATE.clone() };
+            let report = get_gcinput_hid_report(&state);
+            match writer.write(&report).await {
+                Ok(()) => {
+                    trace!("Report Written: {:08b}", report);
+                }
+                Err(e) => warn!("Failed to send report: {:?}", e),
+            }
+        }
+    };
+
+    let out_fut = async {
+        loop {
+            debug!("Readery loop");
+            let mut buf = [0u8; 5];
+            match reader.read(&mut buf).await {
+                Ok(e) => {
+                    debug!("READ SOMETHIN: {:08b}", buf)
+                }
+                Err(e) => {
+                    warn!("Failed to read: {:?}", e);
+                }
+            }
+        }
+    };
+
+    let usb_fut_wrapped = async {
+        usb_fut.await;
+        debug!("USB FUT DED");
+    };
+
+    join(usb_fut_wrapped, join(in_fut, out_fut)).await;
 }

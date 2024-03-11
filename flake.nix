@@ -46,14 +46,14 @@
 
       CARGO_BUILD_TARGET = "thumbv6m-none-eabi";
 
-      RUSTFLAGS = [
-        "-Clinker=flip-link"
-        "-Clink-arg=--nmagic"
-        "-Clink-arg=-Tlink.x"
-        "-Clink-arg=-Tdefmt.x"
-        "-Cinline-threshold=5"
-        "-Cno-vectorize-loops"
-      ];
+      # RUSTFLAGS = [
+      #   "-Clinker=flip-link"
+      #   "-Clink-arg=--nmagic"
+      #   "-Clink-arg=-Tlink.x"
+      #   "-Clink-arg=-Tdefmt.x"
+      #   "-Cinline-threshold=5"
+      #   "-Cno-vectorize-loops"
+      # ];
     in
     {
       packages.default = self.packages.${system}.naxgcc-fw-uf2;
@@ -77,7 +77,7 @@
           "--target=${CARGO_BUILD_TARGET}"
         ];
 
-        inherit RUSTFLAGS;
+        # inherit RUSTFLAGS;
       };
 
       devShells.default = pkgs.mkShell {
@@ -87,9 +87,9 @@
         };
 
         CARGO_TARGET_THUMBV6M_NONE_EABI_RUNNER = "probe-rs run --chip RP2040 --protocol swd";
-        DEFMT_LOG = "trace";
+        DEFMT_LOG = "debug";
 
-        inherit RUSTFLAGS CARGO_BUILD_TARGET;
+        inherit CARGO_BUILD_TARGET;
       };
     }));
 }
