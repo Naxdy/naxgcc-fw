@@ -1,8 +1,14 @@
 use core::default::Default;
 
-use defmt::{error, info, unwrap};
-use packed_struct::{derive::PackedStruct, prelude::packed_bits, types::Integer, PackedStruct};
-use usb_device::bus::{UsbBus, UsbBusAllocator};
+use defmt::{error, info, unwrap, Debug2Format};
+use embedded_hal::timer::CountDown as _;
+use fugit::ExtU32;
+use packed_struct::{derive::PackedStruct, PackedStruct};
+use rp2040_hal::timer::CountDown;
+use usb_device::{
+    bus::{UsbBus, UsbBusAllocator},
+    device::{UsbDeviceBuilder, UsbVidPid},
+};
 use usbd_human_interface_device::{
     descriptor::InterfaceProtocol,
     device::DeviceClass,
@@ -10,10 +16,11 @@ use usbd_human_interface_device::{
         InBytes64, Interface, InterfaceBuilder, InterfaceConfig, OutBytes64, ReportSingle,
         UsbAllocatable,
     },
+    usb_class::UsbHidClassBuilder,
     UsbHidError,
 };
 
-use fugit::ExtU32;
+use crate::input::GCC_STATE;
 
 #[rustfmt::skip]
 pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
@@ -105,7 +112,7 @@ pub struct Buttons2 {
     #[packed_field(bits = "3")]
     pub button_l: bool,
     #[packed_field(bits = "4..=7")]
-    pub blank1: Integer<u8, packed_bits::Bits<4>>,
+    pub blank1: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct)]
@@ -235,4 +242,60 @@ fn get_gcinput_hid_report(input_state: &GcReport) -> [u8; 37] {
     }
 
     buffer
+}
+
+pub fn usb_transfer_loop<'a, T: UsbBus>(
+    usb_bus: UsbBusAllocator<T>,
+    mut poll_timer: CountDown<'a>,
+) -> ! {
+    info!("Got to this point");
+    let mut gcc = UsbHidClassBuilder::new()
+        .add_device(GcConfig::default())
+        .build(&usb_bus);
+
+    info!("Got the gc");
+
+    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x057e, 0x0337))
+        .manufacturer("Naxdy")
+        .product("NaxGCC")
+        .serial_number("fleeb") // TODO: Get this from the flash unique id
+        .device_class(0)
+        .device_protocol(0)
+        .device_sub_class(0)
+        .self_powered(false)
+        .max_power(500)
+        .max_packet_size_0(64)
+        .build();
+
+    poll_timer.start(1.millis());
+
+    info!("Got here");
+
+    loop {
+        if poll_timer.wait().is_ok() {
+            match gcc.device().write_report(&(unsafe { GCC_STATE })) {
+                Err(UsbHidError::WouldBlock) => {}
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Error: {:?}", Debug2Format(&e));
+                    panic!();
+                }
+            }
+        }
+        if usb_dev.poll(&mut [&mut gcc]) {
+            match gcc.device().read_report() {
+                Err(UsbHidError::WouldBlock) => {}
+                Err(e) => {
+                    error!("Failed to read report: {:?}", Debug2Format(&e));
+                }
+                Ok(report) => {
+                    info!("Received report: {:08x}", report.packet);
+                    // rumble packet
+                    if report.packet[0] == 0x11 {
+                        info!("Received rumble info: Controller1 ({:08x}) Controller2 ({:08x}) Controller3 ({:08x}) Controller4 ({:08x})", report.packet[1], report.packet[2], report.packet[3], report.packet[4]);
+                    }
+                }
+            }
+        }
+    }
 }

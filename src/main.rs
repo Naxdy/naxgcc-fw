@@ -10,17 +10,16 @@
 #![no_main]
 mod flash_mem;
 mod gcc_hid;
+mod input;
 
-use core::fmt::Write;
-use defmt::{error, info, Debug2Format};
-use gcc_hid::{GcConfig, GcReport};
+use defmt::{error, info};
+use gcc_hid::GcConfig;
 
-use fugit::ExtU32;
+use fugit::{ExtU32, RateExtU32};
 
 // Ensure we halt the program on panic (if we don't mention this crate it won't
 // be linked)
 use defmt_rtt as _;
-use packed_struct::PackedStruct;
 use panic_halt as _;
 
 // Alias for our HAL crate
@@ -29,25 +28,32 @@ use rp2040_hal as hal;
 // A shorter alias for the Peripheral Access Crate, which provides low-level
 // register access
 use hal::{
-    gpio::FunctionUart,
-    pac,
-    uart::{UartConfig, UartPeripheral},
+    gpio::FunctionSpi,
+    multicore::{Multicore, Stack},
+    pac, Spi,
 };
 
 // Some traits we need
 use embedded_hal::{
-    blocking::delay::DelayMs,
-    digital::v2::{InputPin, OutputPin},
+    blocking::spi::Transfer,
+    digital::v2::OutputPin,
+    spi::{FullDuplex, MODE_0},
     timer::CountDown,
 };
-use rp2040_hal::Clock;
+
 use usb_device::{
     bus::UsbBusAllocator,
-    device::{UsbDeviceBuilder, UsbDeviceState, UsbVidPid},
+    device::{UsbDeviceBuilder, UsbVidPid},
 };
-use usbd_human_interface_device::{usb_class::UsbHidClassBuilder, UsbHidError};
+use usbd_human_interface_device::usb_class::UsbHidClassBuilder;
 
-use crate::flash_mem::{read_from_flash, write_to_flash};
+use crate::{
+    flash_mem::{read_from_flash, write_to_flash},
+    gcc_hid::usb_transfer_loop,
+    input::{input_loop, BasicInputs},
+};
+
+static mut CORE1_STACK: Stack<4096> = Stack::new();
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -89,13 +95,10 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let mut timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
-
-    let mut poll_timer = timer.count_down();
-    poll_timer.start(1.millis());
+    let timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
 
     // The single-cycle I/O block controls our GPIO pins
-    let sio = hal::Sio::new(pac.SIO);
+    let mut sio = hal::Sio::new(pac.SIO);
 
     // Set the pins to their default state
     let pins = hal::gpio::Pins::new(
@@ -104,8 +107,6 @@ fn main() -> ! {
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
-
-    let mut gcc_state = GcReport::default();
 
     // usb parts
     let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
@@ -116,30 +117,6 @@ fn main() -> ! {
         &mut pac.RESETS,
     ));
 
-    let mut gcc = UsbHidClassBuilder::new()
-        .add_device(GcConfig::default())
-        .build(&usb_bus);
-
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x057e, 0x0337))
-        .manufacturer("Naxdy")
-        .product("NaxGCC")
-        .serial_number("fleeb")
-        .device_class(0)
-        .device_protocol(0)
-        .device_sub_class(0)
-        .self_powered(false)
-        .max_power(500)
-        .max_packet_size_0(64)
-        .build();
-
-    gcc_state.stick_x = 0;
-    gcc_state.stick_y = 0;
-    gcc_state.trigger_l = 21;
-    gcc_state.cstick_x = 127;
-    gcc_state.cstick_y = 127;
-
-    let btn_pin = pins.gpio15.into_pull_up_input();
-
     unsafe {
         let some_byte: u8 = 0xAB;
         info!("Byte to be written is {:02X}", some_byte);
@@ -148,38 +125,69 @@ fn main() -> ! {
         info!("Byte read from flash is {:02X}", r);
     }
 
+    let mut mc = Multicore::new(&mut pac.PSM, &mut pac.PPB, &mut sio.fifo);
+    let cores = mc.cores();
+    let core1 = &mut cores[1];
+
+    let _transfer_loop = core1
+        .spawn(unsafe { &mut CORE1_STACK.mem }, move || {
+            let mut poll_timer = timer.count_down();
+            poll_timer.start(1.millis());
+
+            usb_transfer_loop(usb_bus, poll_timer)
+        })
+        .unwrap();
+
     info!("Initialized");
 
-    // Configure GPIO25 as an output
-    let mut led_pin = pins.gpio25.into_push_pull_output();
-    loop {
-        if poll_timer.wait().is_ok() {
-            match gcc.device().write_report(&gcc_state) {
-                Err(UsbHidError::WouldBlock) => {}
-                Ok(_) => {}
-                Err(e) => {
-                    led_pin.set_high().unwrap();
-                    error!("Error: {:?}", Debug2Format(&e));
-                    panic!();
-                }
-            }
-        }
-        if usb_dev.poll(&mut [&mut gcc]) {
-            match gcc.device().read_report() {
-                Err(UsbHidError::WouldBlock) => {}
-                Err(e) => {
-                    error!("Failed to read report: {:?}", Debug2Format(&e));
-                }
-                Ok(report) => {
-                    info!("Received report: {:08x}", report.packet);
-                    // rumble packet
-                    if report.packet[0] == 0x11 {
-                        info!("Received rumble info: Controller1 ({:08x}) Controller2 ({:08x}) Controller3 ({:08x}) Controller4 ({:08x})", report.packet[1], report.packet[2], report.packet[3], report.packet[4]);
-                    }
-                }
-            }
-        }
+    let mut ccs = pins.gpio23.into_push_pull_output();
+    let mut acs = pins.gpio24.into_push_pull_output();
 
-        gcc_state.buttons_2.button_z = btn_pin.is_low().unwrap();
+    ccs.set_low();
+    acs.set_low();
+
+    let spi_device = pac.SPI0;
+
+    let clk = pins.gpio6.into_function::<FunctionSpi>();
+    let tx = pins.gpio7.into_function::<FunctionSpi>();
+    let rx = pins.gpio4.into_function::<FunctionSpi>();
+
+    let spi_pin_layout = (tx, rx, clk);
+
+    let mut spi = Spi::<_, _, _, 8>::new(spi_device, spi_pin_layout).init(
+        &mut pac.RESETS,
+        3_000_000u32.Hz(),
+        3_000_000u32.Hz(),
+        MODE_0,
+    );
+
+    let mut w = [0b11010000u8; 3];
+
+    info!("W is {}", w);
+
+    let r = spi.transfer(&mut w);
+
+    match r {
+        Ok(t) => {
+            info!("T is {}", t)
+        }
+        Err(e) => {
+            error!("SPI transfer failed: {}", e);
+        }
     }
+
+    input_loop(BasicInputs {
+        button_a: pins.gpio17.into_pull_up_input(),
+        button_b: pins.gpio16.into_pull_up_input(),
+        button_x: pins.gpio18.into_pull_up_input(),
+        button_y: pins.gpio19.into_pull_up_input(),
+        button_z: pins.gpio20.into_pull_up_input(),
+        button_r: pins.gpio21.into_pull_up_input(),
+        button_l: pins.gpio22.into_pull_up_input(),
+        dpad_left: pins.gpio8.into_pull_up_input(),
+        dpad_up: pins.gpio9.into_pull_up_input(),
+        dpad_down: pins.gpio10.into_pull_up_input(),
+        dpad_right: pins.gpio11.into_pull_up_input(),
+        button_start: pins.gpio5.into_pull_up_input(),
+    });
 }
