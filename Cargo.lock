@@ -168,6 +168,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "format_no_std"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d8ca877c98f19024674b6959301d81d3708c417823fa050692b45b54d74fe7d"
+
+[[package]]
 name = "frunk"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -264,6 +270,7 @@ dependencies = [
  "defmt",
  "defmt-rtt",
  "embedded-hal",
+ "format_no_std",
  "fugit",
  "packed_struct",
  "panic-halt",

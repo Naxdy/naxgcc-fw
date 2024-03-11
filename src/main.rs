@@ -12,16 +12,17 @@ mod flash_mem;
 mod gcc_hid;
 mod input;
 
+use cortex_m::interrupt::Mutex;
 use defmt::{error, info};
-use gcc_hid::GcConfig;
 
 use fugit::{ExtU32, RateExtU32};
 
 // Ensure we halt the program on panic (if we don't mention this crate it won't
 // be linked)
 use defmt_rtt as _;
-use panic_halt as _;
+use panic_probe as _;
 
+use rp2040_flash::flash::flash_unique_id;
 // Alias for our HAL crate
 use rp2040_hal as hal;
 
@@ -29,23 +30,19 @@ use rp2040_hal as hal;
 // register access
 use hal::{
     gpio::FunctionSpi,
-    multicore::{Multicore, Stack},
+    multicore::{self, Multicore, Stack},
     pac, Spi,
 };
 
 // Some traits we need
 use embedded_hal::{
-    blocking::spi::Transfer,
+    blocking::{delay::DelayMs, spi::Transfer},
     digital::v2::OutputPin,
-    spi::{FullDuplex, MODE_0},
+    spi::MODE_0,
     timer::CountDown,
 };
 
-use usb_device::{
-    bus::UsbBusAllocator,
-    device::{UsbDeviceBuilder, UsbVidPid},
-};
-use usbd_human_interface_device::usb_class::UsbHidClassBuilder;
+use usb_device::bus::UsbBusAllocator;
 
 use crate::{
     flash_mem::{read_from_flash, write_to_flash},
@@ -54,6 +51,10 @@ use crate::{
 };
 
 static mut CORE1_STACK: Stack<4096> = Stack::new();
+
+pub static mut LOCKED: bool = false;
+
+pub static CORE_LOCK: Mutex<()> = Mutex::new(());
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -95,7 +96,7 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
+    let mut timer = rp2040_hal::Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
 
     // The single-cycle I/O block controls our GPIO pins
     let mut sio = hal::Sio::new(pac.SIO);
@@ -118,9 +119,6 @@ fn main() -> ! {
     ));
 
     unsafe {
-        let some_byte: u8 = 0xAB;
-        info!("Byte to be written is {:02X}", some_byte);
-        write_to_flash(some_byte);
         let r = read_from_flash();
         info!("Byte read from flash is {:02X}", r);
     }
@@ -143,8 +141,8 @@ fn main() -> ! {
     let mut ccs = pins.gpio23.into_push_pull_output();
     let mut acs = pins.gpio24.into_push_pull_output();
 
-    ccs.set_low();
-    acs.set_low();
+    ccs.set_high().unwrap();
+    acs.set_high().unwrap();
 
     let spi_device = pac.SPI0;
 
@@ -174,6 +172,15 @@ fn main() -> ! {
         Err(e) => {
             error!("SPI transfer failed: {}", e);
         }
+    }
+
+    unsafe {
+        LOCKED = true;
+        timer.delay_ms(100);
+        let some_byte: u8 = 0xAB;
+        info!("Byte to be written is {:02X}", some_byte);
+        write_to_flash(some_byte);
+        LOCKED = false;
     }
 
     input_loop(BasicInputs {

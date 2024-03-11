@@ -1,9 +1,10 @@
 use core::default::Default;
 
-use defmt::{error, info, unwrap, Debug2Format};
+use defmt::{error, info, unwrap, Debug2Format, Format};
 use embedded_hal::timer::CountDown as _;
 use fugit::ExtU32;
 use packed_struct::{derive::PackedStruct, PackedStruct};
+use rp2040_flash::flash::flash_unique_id;
 use rp2040_hal::timer::CountDown;
 use usb_device::{
     bus::{UsbBus, UsbBusAllocator},
@@ -20,7 +21,7 @@ use usbd_human_interface_device::{
     UsbHidError,
 };
 
-use crate::input::GCC_STATE;
+use crate::{input::GCC_STATE, CORE_LOCK, LOCKED};
 
 #[rustfmt::skip]
 pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
@@ -79,7 +80,7 @@ pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
     0xC0,              // End Collection
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct, Format)]
 #[packed_struct(bit_numbering = "lsb0", size_bytes = "1")]
 pub struct Buttons1 {
     #[packed_field(bits = "0")]
@@ -100,7 +101,7 @@ pub struct Buttons1 {
     pub dpad_up: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct, Format)]
 #[packed_struct(bit_numbering = "lsb0", size_bytes = "1")]
 pub struct Buttons2 {
     #[packed_field(bits = "0")]
@@ -115,7 +116,7 @@ pub struct Buttons2 {
     pub blank1: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct, Format)]
 #[packed_struct(bit_numbering = "msb0", size_bytes = "8")]
 pub struct GcReport {
     #[packed_field(bits = "0..=7")]
@@ -248,17 +249,35 @@ pub fn usb_transfer_loop<'a, T: UsbBus>(
     usb_bus: UsbBusAllocator<T>,
     mut poll_timer: CountDown<'a>,
 ) -> ! {
-    info!("Got to this point");
+    // let mut serial_buffer = [0u8; 64];
+
+    // let serial = unsafe {
+    //     let mut id = [0u8; 8];
+
+    //     flash_unique_id(&mut id, true);
+
+    //     let s = format_no_std::show(
+    //         &mut serial_buffer,
+    //         format_args!(
+    //             "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+    //             id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7]
+    //         ),
+    //     )
+    //     .unwrap();
+
+    //     info!("Detected flash with unique serial number {}", s);
+
+    //     s
+    // };
+
     let mut gcc = UsbHidClassBuilder::new()
         .add_device(GcConfig::default())
         .build(&usb_bus);
 
-    info!("Got the gc");
-
     let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x057e, 0x0337))
         .manufacturer("Naxdy")
         .product("NaxGCC")
-        .serial_number("fleeb") // TODO: Get this from the flash unique id
+        .serial_number("flarn")
         .device_class(0)
         .device_protocol(0)
         .device_sub_class(0)
@@ -272,6 +291,10 @@ pub fn usb_transfer_loop<'a, T: UsbBus>(
     info!("Got here");
 
     loop {
+        if unsafe { LOCKED } {
+            continue;
+        }
+
         if poll_timer.wait().is_ok() {
             match gcc.device().write_report(&(unsafe { GCC_STATE })) {
                 Err(UsbHidError::WouldBlock) => {}

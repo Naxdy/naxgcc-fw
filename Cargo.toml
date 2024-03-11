@@ -20,6 +20,7 @@ rp2040-boot2 = "0.3.0"
 fugit = "0.3.7"
 packed_struct = { version = "0.10.1", default_features = false }
 panic-halt = "0.2.0"
+format_no_std = "1.0.2"
 
 # cargo build/run
 [profile.dev]

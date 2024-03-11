@@ -1,5 +1,5 @@
-use embedded_hal::digital::{v2::InputPin, v2::IoPin};
-use rp2040_hal::gpio::{FunctionSpi, Pin, PinId, PullDown};
+use defmt::info;
+use embedded_hal::digital::v2::InputPin;
 
 use crate::gcc_hid::{Buttons1, Buttons2, GcReport};
 
@@ -83,6 +83,8 @@ pub fn input_loop<
 >(
     basic_inputs: BasicInputs<A, B, X, Y, Dl, Dr, Dd, Du, S, Z, R, L>,
 ) -> ! {
+    info!("Input loop started.");
+
     let update_gcc_state = || unsafe {
         // simple booleans
         assign_pins!(GCC_STATE, basic_inputs, {
