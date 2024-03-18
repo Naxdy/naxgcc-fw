@@ -8,7 +8,7 @@ use embassy_futures::{
 use embassy_rp::{peripherals::USB, usb::Driver};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::Duration;
+use embassy_time::{Duration, Instant};
 use embassy_usb::{
     class::hid::{HidReaderWriter, ReportId, RequestHandler, State},
     control::OutResponse,
@@ -17,7 +17,7 @@ use embassy_usb::{
 use packed_struct::{derive::PackedStruct, PackedStruct};
 use portable_atomic::Ordering;
 
-use crate::input::GCC_STATE;
+use crate::input::GCC_SIGNAL;
 
 #[rustfmt::skip]
 pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
@@ -235,19 +235,43 @@ impl Handler for MyDeviceHandler {
 }
 
 #[embassy_executor::task]
-pub async fn usb_transfer_loop(driver: Driver<'static, USB>) {
-    debug!("Start of config");
+pub async fn usb_transfer_loop(driver: Driver<'static, USB>, raw_serial: [u8; 8]) {
+    let mut serial_buffer = [0u8; 64];
+
+    let serial = {
+        let s = format_no_std::show(
+            &mut serial_buffer,
+            format_args!(
+                "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                raw_serial[0],
+                raw_serial[1],
+                raw_serial[2],
+                raw_serial[3],
+                raw_serial[4],
+                raw_serial[5],
+                raw_serial[6],
+                raw_serial[7]
+            ),
+        )
+        .unwrap();
+
+        info!("Detected flash with unique serial number {}", s);
+
+        s
+    };
+
+    trace!("Start of config");
     let mut usb_config = embassy_usb::Config::new(0x057e, 0x0337);
     usb_config.manufacturer = Some("Naxdy");
     usb_config.product = Some("NaxGCC");
-    usb_config.serial_number = Some("Fleeb");
+    usb_config.serial_number = Some(serial);
     usb_config.max_power = 100;
     usb_config.max_packet_size_0 = 64;
     usb_config.device_class = 0;
     usb_config.device_protocol = 0;
-    usb_config.self_powered = false;
+    usb_config.self_powered = true;
     usb_config.device_sub_class = 0;
-    usb_config.supports_remote_wakeup = false;
+    usb_config.supports_remote_wakeup = true;
 
     let mut device_descriptor = [0; 256];
     let mut config_descriptor = [0; 256];
@@ -275,8 +299,9 @@ pub async fn usb_transfer_loop(driver: Driver<'static, USB>) {
     let hid_config = embassy_usb::class::hid::Config {
         report_descriptor: GCC_REPORT_DESCRIPTOR,
         request_handler: Some(&request_handler),
-        poll_ms: 1,
-        max_packet_size: 64,
+        poll_ms: 8,
+        max_packet_size_in: 37,
+        max_packet_size_out: 5,
     };
     let hid = HidReaderWriter::<_, 5, 37>::new(&mut builder, &mut state, hid_config);
 
@@ -294,15 +319,19 @@ pub async fn usb_transfer_loop(driver: Driver<'static, USB>) {
     let (mut reader, mut writer) = hid.split();
     debug!("In here");
 
-    let mut timer = embassy_time::Ticker::every(Duration::from_millis(1));
+    let mut lasttime = Instant::now();
 
     let in_fut = async {
         loop {
-            let state = unsafe { GCC_STATE.clone() };
+            let state = GCC_SIGNAL.wait().await;
             let report = get_gcinput_hid_report(&state);
             match writer.write(&report).await {
                 Ok(()) => {
                     trace!("Report Written: {:08b}", report);
+                    let currtime = Instant::now();
+                    let polltime = currtime.duration_since(lasttime);
+                    trace!("Report written in {}us", polltime.as_micros());
+                    lasttime = currtime;
                 }
                 Err(e) => warn!("Failed to send report: {:?}", e),
             }
@@ -311,10 +340,10 @@ pub async fn usb_transfer_loop(driver: Driver<'static, USB>) {
 
     let out_fut = async {
         loop {
-            debug!("Readery loop");
+            trace!("Readery loop");
             let mut buf = [0u8; 5];
             match reader.read(&mut buf).await {
-                Ok(e) => {
+                Ok(_e) => {
                     debug!("READ SOMETHIN: {:08b}", buf)
                 }
                 Err(e) => {

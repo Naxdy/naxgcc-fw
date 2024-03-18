@@ -8,6 +8,11 @@
 
     flake-utils.url = "github:numtide/flake-utils";
 
+    embassy-rs-patched = {
+      url = "github:Naxdy/embassy?ref=naxgcc-fw";
+      flake = false;
+    };
+
     naersk = {
       url = "github:nmattia/naersk";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -20,6 +25,7 @@
     , rust-overlay
     , flake-utils
     , naersk
+    , embassy-rs-patched
     }: (flake-utils.lib.eachDefaultSystem (system:
     let
       pkgs = import nixpkgs {
@@ -30,7 +36,7 @@
         config.allowUnsupportedSystem = true;
       };
 
-      rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
+      rustToolchain = pkgs.rust-bin.stable.latest.default.override {
         extensions = [
           "rust-src"
         ];
@@ -46,14 +52,11 @@
 
       CARGO_BUILD_TARGET = "thumbv6m-none-eabi";
 
-      # RUSTFLAGS = [
-      #   "-Clinker=flip-link"
-      #   "-Clink-arg=--nmagic"
-      #   "-Clink-arg=-Tlink.x"
-      #   "-Clink-arg=-Tdefmt.x"
-      #   "-Cinline-threshold=5"
-      #   "-Cno-vectorize-loops"
-      # ];
+      prepCmd = ''
+        mkdir -p lib
+        rm lib/embassy-rs || true
+        ln -s "${embassy-rs-patched}" lib/embassy-rs
+      '';
     in
     {
       packages.default = self.packages.${system}.naxgcc-fw-uf2;
@@ -67,9 +70,7 @@
         pname = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.name;
         version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
 
-        nativeBuildInputs = [
-          pkgs.flip-link
-        ];
+        prePatch = prepCmd;
 
         src = self;
 
@@ -83,13 +84,15 @@
       devShells.default = pkgs.mkShell {
         nativeBuildInputs = builtins.attrValues {
           inherit rustToolchain;
-          inherit (pkgs) gcc-arm-embedded flip-link elf2uf2-rs picotool probe-rs cargo-expand;
+          inherit (pkgs) gcc-arm-embedded elf2uf2-rs picotool probe-rs cargo-expand;
         };
 
         CARGO_TARGET_THUMBV6M_NONE_EABI_RUNNER = "probe-rs run --chip RP2040 --protocol swd";
         DEFMT_LOG = "debug";
 
         inherit CARGO_BUILD_TARGET;
+
+        shellHook = prepCmd;
       };
     }));
 }
