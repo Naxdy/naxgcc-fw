@@ -42,6 +42,7 @@ fixed = "1.23.1"
 fixed-macro = "1.2"
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
+libm = { version = "0.2.8" }
 
 #cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
 cortex-m = { version = "0.7.6", features = ["inline-asm"] }

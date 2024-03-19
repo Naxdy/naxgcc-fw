@@ -6,8 +6,11 @@
 #![no_main]
 mod gcc_hid;
 mod input;
+mod stick;
 
-use defmt::{debug, info};
+use core::ops::Deref;
+
+use defmt::{debug, info, Format};
 use embassy_executor::Executor;
 use embassy_rp::{
     bind_interrupts,
@@ -15,12 +18,14 @@ use embassy_rp::{
     gpio::{self, Input},
     multicore::{spawn_core1, Stack},
     peripherals::USB,
+    pwm::Pwm,
     spi::{self, Spi},
     usb::{Driver, InterruptHandler},
 };
 use gcc_hid::usb_transfer_loop;
 use gpio::{Level, Output};
 use input::input_loop;
+use packed_struct::PackedStruct;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -30,6 +35,31 @@ static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 
 const FLASH_SIZE: usize = 2 * 1024 * 1024;
 const ADDR_OFFSET: u32 = 0x100000;
+
+/// wrapper type because packed_struct doesn't implement float
+/// packing by default for some reason
+#[derive(Debug, Format, Clone, Default)]
+pub struct PackedFloat(f32);
+
+impl PackedStruct for PackedFloat {
+    type ByteArray = [u8; 4];
+
+    fn pack(&self) -> packed_struct::PackingResult<Self::ByteArray> {
+        Ok(self.to_be_bytes())
+    }
+
+    fn unpack(src: &Self::ByteArray) -> packed_struct::PackingResult<Self> {
+        Ok(Self(f32::from_be_bytes(*src)))
+    }
+}
+
+impl Deref for PackedFloat {
+    type Target = f32;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
@@ -79,6 +109,17 @@ fn main() -> ! {
     let spi_acs = Output::new(p_acs, Level::High); // active low
     let spi_ccs = Output::new(p_ccs, Level::High); // active low
 
+    let mut pwm_config: embassy_rp::pwm::Config = Default::default();
+    pwm_config.top = 255;
+    pwm_config.enable = true;
+    pwm_config.compare_b = 255;
+
+    let pwm_rumble = Pwm::new_output_b(p.PWM_CH4, p.PIN_25, pwm_config.clone());
+    let pwm_brake = Pwm::new_output_b(p.PWM_CH6, p.PIN_29, pwm_config.clone());
+
+    pwm_rumble.set_counter(255);
+    pwm_brake.set_counter(0);
+
     executor0.run(|spawner| {
         spawner
             .spawn(input_loop(
@@ -95,8 +136,8 @@ fn main() -> ! {
                 Input::new(p.PIN_18, gpio::Pull::Up),
                 Input::new(p.PIN_19, gpio::Pull::Up),
                 Input::new(p.PIN_5, gpio::Pull::Up),
-                Input::new(p.PIN_25, gpio::Pull::Up),
-                Input::new(p.PIN_29, gpio::Pull::Up),
+                pwm_rumble,
+                pwm_brake,
                 spi,
                 spi_acs,
                 spi_ccs,
