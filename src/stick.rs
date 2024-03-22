@@ -7,15 +7,15 @@ use crate::input::ControllerConfig;
 
 /// fit order for the linearization
 const FIT_ORDER: usize = 3;
-const N_COEFFS: usize = FIT_ORDER + 1;
+const NUM_COEFFS: usize = FIT_ORDER + 1;
 const NO_OF_NOTCHES: usize = 16;
 const MAX_ORDER: usize = 20;
 
 #[derive(Clone, Debug, Default, Format)]
 pub struct StickParams {
     // these are the linearization coefficients
-    pub fit_coeffs_x: [f32; N_COEFFS],
-    pub fit_coeffs_y: [f32; N_COEFFS],
+    pub fit_coeffs_x: [f32; NUM_COEFFS],
+    pub fit_coeffs_y: [f32; NUM_COEFFS],
 
     // these are the notch remap parameters
     pub affine_coeffs_x: [[f32; 16]; 4], // affine transformation coefficients for all regions of the stick
@@ -60,8 +60,8 @@ pub struct FilterGains {
 
 #[derive(Clone, Debug, Default)]
 struct LinearizeCalibrationOutput {
-    pub fit_coeffs_x: [f64; N_COEFFS],
-    pub fit_coeffs_y: [f64; N_COEFFS],
+    pub fit_coeffs_x: [f64; NUM_COEFFS],
+    pub fit_coeffs_y: [f64; NUM_COEFFS],
 
     pub out_x: [f32; NO_OF_NOTCHES],
     pub out_y: [f32; NO_OF_NOTCHES],
@@ -76,12 +76,14 @@ pub fn run_kalman(
     todo!()
 }
 
+/// Calculate the power of a number
 fn curve_fit_power(base: f64, exponent: u32) -> f64 {
     if exponent == 0 {
         return 1.0;
     }
 
     let mut val = base;
+
     for _ in 1..exponent {
         val *= base;
     }
@@ -89,6 +91,7 @@ fn curve_fit_power(base: f64, exponent: u32) -> f64 {
     val
 }
 
+/// Substitutes a column in a matrix with a vector
 fn sub_col<const N: usize>(
     matrix: &[[f64; N]; N],
     t: &[f64; MAX_ORDER],
@@ -96,24 +99,32 @@ fn sub_col<const N: usize>(
     n: usize,
 ) -> [[f64; N]; N] {
     let mut m = *matrix;
+
     for i in 0..n {
         m[i][col] = t[i];
     }
+
     m
 }
 
+/// Calculate the determinant of a matrix
 fn det<const N: usize>(matrix: &[[f64; N]; N]) -> f64 {
     let sign = trianglize(matrix);
+
     if sign == 0 {
         return 0.;
     }
+
     let mut p = 1f64;
+
     for i in 0..N {
         p *= matrix[i][i];
     }
+
     p * (sign as f64)
 }
 
+/// Trianglize a matrix
 fn trianglize<const N: usize>(matrix: &[[f64; N]; N]) -> i32 {
     let mut sign = 1;
     let mut matrix = *matrix;
@@ -148,22 +159,22 @@ fn trianglize<const N: usize>(matrix: &[[f64; N]; N]) -> i32 {
     sign
 }
 
-fn fit_curve<const N: usize, const NCoeffs: usize>(
+fn fit_curve<const N: usize, const NCOEFFS: usize>(
     order: i32,
     px: &[f64; N],
     py: &[f64; N],
-) -> [f64; NCoeffs] {
-    let mut coeffs = [0f64; NCoeffs];
+) -> [f64; NCOEFFS] {
+    let mut coeffs = [0f64; NCOEFFS];
 
-    if NCoeffs != (order + 1) as usize {
+    if NCOEFFS != (order + 1) as usize {
         panic!(
             "Invalid coefficients length, expected {}, but got {}",
             order + 1,
-            NCoeffs
+            NCOEFFS
         );
     }
 
-    if NCoeffs > MAX_ORDER || NCoeffs < 2 {
+    if NCOEFFS > MAX_ORDER || NCOEFFS < 2 {
         panic!("Matrix size out of bounds");
     }
 
@@ -177,27 +188,27 @@ fn fit_curve<const N: usize, const NCoeffs: usize>(
     for i in 0..N {
         let x = px[i];
         let y = py[i];
-        for j in 0..NCoeffs * 2 - 1 {
+        for j in 0..NCOEFFS * 2 - 1 {
             s[j] += curve_fit_power(x, j as u32);
         }
-        for j in 0..NCoeffs {
+        for j in 0..NCOEFFS {
             t[j] += y * curve_fit_power(x, j as u32);
         }
     }
 
     //Master matrix LHS of linear equation
-    let mut matrix = [[0f64; NCoeffs]; NCoeffs];
+    let mut matrix = [[0f64; NCOEFFS]; NCOEFFS];
 
-    for i in 0..NCoeffs {
-        for j in 0..NCoeffs {
+    for i in 0..NCOEFFS {
+        for j in 0..NCOEFFS {
             matrix[i][j] = s[i + j];
         }
     }
 
     let denom = det(&matrix);
 
-    for i in 0..NCoeffs {
-        coeffs[NCoeffs - i - 1] = det(&sub_col(&matrix, &t, i, NCoeffs)) / denom;
+    for i in 0..NCOEFFS {
+        coeffs[NCOEFFS - i - 1] = det(&sub_col(&matrix, &t, i, NCOEFFS)) / denom;
     }
 
     coeffs
@@ -218,27 +229,27 @@ pub fn linearize(point: f32, coefficients: &[f32; 4]) -> f32 {
 ///
 ///	Outputs:
 ///		linearization fit coefficients for X and Y
-pub fn linearize_calibration(in_x: [f32; 17], in_y: [f32; 17]) -> LinearizeCalibrationOutput {
+pub fn linearize_calibration(in_x: &[f64; 17], in_y: &[f64; 17]) -> LinearizeCalibrationOutput {
     let mut fit_points_x = [0f64; 5];
     let mut fit_points_y = [0f64; 5];
 
-    fit_points_x[0] = in_x[8 + 1] as f64;
-    fit_points_x[1] = (in_x[6 + 1] as f64 + in_x[10 + 1] as f64) / 2.0f64;
-    fit_points_x[2] = in_x[0] as f64;
-    fit_points_x[3] = (in_x[2 + 1] as f64 + in_x[14 + 1] as f64) / 2.0f64;
-    fit_points_x[4] = in_x[0 + 1] as f64;
+    fit_points_x[0] = in_x[8 + 1];
+    fit_points_x[1] = (in_x[6 + 1] + in_x[10 + 1]) / 2.0f64;
+    fit_points_x[2] = in_x[0];
+    fit_points_x[3] = (in_x[2 + 1] + in_x[14 + 1]) / 2.0f64;
+    fit_points_x[4] = in_x[0 + 1];
 
-    fit_points_y[0] = in_y[12 + 1] as f64;
-    fit_points_y[1] = (in_y[10 + 1] as f64 + in_y[14 + 1] as f64) / 2.0f64;
-    fit_points_y[2] = in_y[0] as f64;
-    fit_points_y[3] = (in_y[6 + 1] as f64 + in_y[2 + 1] as f64) / 2.0f64;
-    fit_points_y[4] = in_y[4 + 1] as f64;
+    fit_points_y[0] = in_y[12 + 1];
+    fit_points_y[1] = (in_y[10 + 1] + in_y[14 + 1]) / 2.0f64;
+    fit_points_y[2] = in_y[0];
+    fit_points_y[3] = (in_y[6 + 1] + in_y[2 + 1]) / 2.0f64;
+    fit_points_y[4] = in_y[4 + 1];
 
     let x_output: [f64; 5] = [27.5, 53.2537879754, 127.5, 201.7462120246, 227.5];
     let y_output: [f64; 5] = [27.5, 53.2537879754, 127.5, 201.7462120246, 227.5];
 
-    let mut fit_coeffs_x = fit_curve::<5, N_COEFFS>(FIT_ORDER as i32, &fit_points_x, &x_output);
-    let mut fit_coeffs_y = fit_curve::<5, N_COEFFS>(FIT_ORDER as i32, &fit_points_y, &y_output);
+    let mut fit_coeffs_x = fit_curve::<5, NUM_COEFFS>(FIT_ORDER as i32, &fit_points_x, &x_output);
+    let mut fit_coeffs_y = fit_curve::<5, NUM_COEFFS>(FIT_ORDER as i32, &fit_points_y, &y_output);
 
     let x_zero_error = linearize(fit_points_x[2] as f32, &fit_coeffs_x.map(|e| e as f32));
     let y_zero_error = linearize(fit_points_y[2] as f32, &fit_coeffs_y.map(|e| e as f32));
@@ -250,8 +261,8 @@ pub fn linearize_calibration(in_x: [f32; 17], in_y: [f32; 17]) -> LinearizeCalib
     let mut out_y = [0f32; NO_OF_NOTCHES];
 
     for i in 0..=NO_OF_NOTCHES {
-        out_x[i] = linearize(in_x[i], &fit_coeffs_x.map(|e| e as f32));
-        out_y[i] = linearize(in_y[i], &fit_coeffs_y.map(|e| e as f32));
+        out_x[i] = linearize(in_x[i] as f32, &fit_coeffs_x.map(|e| e as f32));
+        out_y[i] = linearize(in_y[i] as f32, &fit_coeffs_y.map(|e| e as f32));
     }
 
     LinearizeCalibrationOutput {

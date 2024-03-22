@@ -17,6 +17,7 @@ use embassy_time::{Instant, Timer};
 use packed_struct::derive::PackedStruct;
 
 use crate::{
+    filter::{run_waveshaping, WaveshapingValues},
     gcc_hid::GcReport,
     stick::{linearize, run_kalman, FilterGains, StickParams},
     PackedFloat, ADDR_OFFSET, FLASH_SIZE,
@@ -31,14 +32,14 @@ static STICK_SIGNAL: Signal<CriticalSectionRawMutex, StickState> = Signal::new()
 pub struct ControllerConfig {
     #[packed_field(size_bits = "8")]
     pub config_version: u8,
-    #[packed_field(size_bits = "32")]
-    pub ax_waveshaping: PackedFloat,
-    #[packed_field(size_bits = "32")]
-    pub ay_waveshaping: PackedFloat,
-    #[packed_field(size_bits = "32")]
-    pub cx_waveshaping: PackedFloat,
-    #[packed_field(size_bits = "32")]
-    pub cy_waveshaping: PackedFloat,
+    #[packed_field(size_bits = "8")]
+    pub ax_waveshaping: u8,
+    #[packed_field(size_bits = "8")]
+    pub ay_waveshaping: u8,
+    #[packed_field(size_bits = "8")]
+    pub cx_waveshaping: u8,
+    #[packed_field(size_bits = "8")]
+    pub cy_waveshaping: u8,
 }
 
 struct StickState {
@@ -48,14 +49,36 @@ struct StickState {
     cy: u8,
 }
 
+struct StickPositions {
+    x: f32,
+    y: f32,
+    cx: f32,
+    cy: f32,
+}
+
+struct RawStickValues {
+    ax_linearized: f32,
+    ay_linearized: f32,
+    cx_linearized: f32,
+    cy_linearized: f32,
+    ax_raw: f32,
+    ay_raw: f32,
+    cx_raw: f32,
+    cy_raw: f32,
+    ax_unfiltered: f32,
+    ay_unfiltered: f32,
+    cx_unfiltered: f32,
+    cy_unfiltered: f32,
+}
+
 #[derive(PartialEq, Eq)]
-enum Stick {
+pub enum Stick {
     ControlStick,
     CStick,
 }
 
 #[derive(PartialEq, Eq)]
-enum StickAxis {
+pub enum StickAxis {
     XAxis,
     YAxis,
 }
@@ -104,11 +127,14 @@ async fn update_stick_states<
     mut spi: &mut Spi<'a, I, M>,
     mut spi_acs: &mut Output<'a, Acs>,
     mut spi_ccs: &mut Output<'a, Ccs>,
-    adc_scale: f32,
     controlstick_params: &StickParams,
     cstick_params: &StickParams,
     controller_config: &ControllerConfig,
     filter_gains: &FilterGains,
+    controlstick_waveshaping_values: &mut WaveshapingValues,
+    cstick_waveshaping_values: &mut WaveshapingValues,
+    old_stick_pos: &mut StickPositions,
+    raw_stick_values: &mut RawStickValues,
 ) {
     let mut adc_count = 0u32;
     let mut ax_sum = 0u32;
@@ -158,10 +184,15 @@ async fn update_stick_states<
 
     timer.await;
 
-    let raw_controlstick_x = (ax_sum as f32) / (adc_count as f32) / 4096.0f32 * adc_scale;
-    let raw_controlstick_y = (ay_sum as f32) / (adc_count as f32) / 4096.0f32 * adc_scale;
-    let raw_cstick_x = (cx_sum as f32) / (adc_count as f32) / 4096.0f32 * adc_scale;
-    let raw_cstick_y = (cy_sum as f32) / (adc_count as f32) / 4096.0f32 * adc_scale;
+    let raw_controlstick_x = (ax_sum as f32) / (adc_count as f32) / 4096.0f32;
+    let raw_controlstick_y = (ay_sum as f32) / (adc_count as f32) / 4096.0f32;
+    let raw_cstick_x = (cx_sum as f32) / (adc_count as f32) / 4096.0f32;
+    let raw_cstick_y = (cy_sum as f32) / (adc_count as f32) / 4096.0f32;
+
+    raw_stick_values.ax_raw = raw_controlstick_x;
+    raw_stick_values.ay_raw = raw_controlstick_y;
+    raw_stick_values.cx_raw = raw_cstick_x;
+    raw_stick_values.cy_raw = raw_cstick_y;
 
     let x_z = linearize(raw_controlstick_x, &controlstick_params.fit_coeffs_x);
     let y_z = linearize(raw_controlstick_y, &controlstick_params.fit_coeffs_y);
@@ -169,7 +200,52 @@ async fn update_stick_states<
     let pos_cx = linearize(raw_cstick_x, &cstick_params.fit_coeffs_x);
     let pos_cy = linearize(raw_cstick_y, &cstick_params.fit_coeffs_y);
 
+    raw_stick_values.ax_linearized = x_z;
+    raw_stick_values.ay_linearized = y_z;
+    raw_stick_values.cx_linearized = pos_cx;
+    raw_stick_values.cy_linearized = pos_cy;
+
     let (x_pos_filt, y_pos_filt) = run_kalman(x_z, y_z, controller_config, filter_gains);
+
+    let (shaped_x, shaped_y) = run_waveshaping(
+        x_pos_filt,
+        y_pos_filt,
+        Stick::ControlStick,
+        controlstick_waveshaping_values,
+        controller_config,
+        filter_gains,
+    );
+
+    let pos_x =
+        filter_gains.x_smoothing * shaped_x + (1.0 - filter_gains.x_smoothing) * old_stick_pos.x;
+    let pos_y =
+        filter_gains.y_smoothing * shaped_y + (1.0 - filter_gains.y_smoothing) * old_stick_pos.y;
+    old_stick_pos.x = pos_x;
+    old_stick_pos.y = pos_y;
+
+    let (shaped_cx, shaped_cy) = run_waveshaping(
+        pos_cx,
+        pos_cy,
+        Stick::CStick,
+        cstick_waveshaping_values,
+        controller_config,
+        filter_gains,
+    );
+
+    let old_cx_pos = old_stick_pos.cx;
+    let old_cy_pos = old_stick_pos.cy;
+    old_stick_pos.cx = shaped_cx;
+    old_stick_pos.cy = shaped_cy;
+
+    let x_weight_1 = filter_gains.c_xsmoothing;
+    let x_weight_2 = 1.0 - x_weight_1;
+    let y_weight_1 = filter_gains.c_ysmoothing;
+    let y_weight_2 = 1.0 - y_weight_1;
+
+    let pos_cx_filt = x_weight_1 * shaped_cx + x_weight_2 * old_cx_pos;
+    let pos_cy_filt = y_weight_1 * shaped_cy + y_weight_2 * old_cy_pos;
+
+    // phob optionally runs a median filter here, but we leave it for now
 
     STICK_SIGNAL.signal(StickState {
         ax: 127,
