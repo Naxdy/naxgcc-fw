@@ -1,9 +1,14 @@
 // vast majority of this is taken from Phob firmware
 
-use defmt::Format;
-use libm::fabs;
+use core::f32::consts::PI;
 
-use crate::input::ControllerConfig;
+use defmt::Format;
+use libm::{atan2f, fabs};
+
+use crate::{
+    input::{ControllerConfig, Stick},
+    stick,
+};
 
 /// fit order for the linearization
 const FIT_ORDER: usize = 3;
@@ -18,8 +23,8 @@ pub struct StickParams {
     pub fit_coeffs_y: [f32; NUM_COEFFS],
 
     // these are the notch remap parameters
-    pub affine_coeffs_x: [[f32; 16]; 4], // affine transformation coefficients for all regions of the stick
-    pub boundary_angles_x: [f32; 4], // angles at the boundaries between regions of the stick (in the plane)
+    pub affine_coeffs: [[f32; 16]; 4], // affine transformation coefficients for all regions of the stick
+    pub boundary_angles: [f32; 4], // angles at the boundaries between regions of the stick (in the plane)
 }
 
 #[derive(Clone, Debug, Default, Format)]
@@ -271,4 +276,47 @@ pub fn linearize_calibration(in_x: &[f64; 17], in_y: &[f64; 17]) -> LinearizeCal
         out_x,
         out_y,
     }
+}
+
+pub fn notch_remap(
+    x_in: f32,
+    y_in: f32,
+    stick_params: &StickParams,
+    controller_config: &ControllerConfig,
+    which_stick: Stick,
+) -> (f32, f32) {
+    //determine the angle between the x unit vector and the current position vector
+    let angle = match atan2f(y_in, x_in) {
+        //unwrap the angle based on the first region boundary
+        a if a < stick_params.boundary_angles[0] => a + PI * 2.0,
+        a => a,
+    };
+
+    //go through the region boundaries from lowest angle to highest, checking if the current position vector is in that region
+    //if the region is not found then it must be between the first and the last boundary, ie the last region
+    //we check GATE_REGIONS*2 because each notch has its own very small region we use to make notch values more consistent
+    let region = 'a: {
+        for i in 1..NO_OF_NOTCHES {
+            if angle < stick_params.boundary_angles[i] {
+                break 'a i - 1;
+            }
+        }
+        NO_OF_NOTCHES - 1
+    };
+
+    let stick_scale = match which_stick {
+        Stick::ControlStick => controller_config.astick_analog_scaler as f32 / 100.,
+        Stick::CStick => controller_config.cstick_analog_scaler as f32 / 100.,
+    };
+
+    let x_out = stick_scale
+        * (stick_params.affine_coeffs[region][0] * x_in
+            + stick_params.affine_coeffs[region][1] * y_in);
+    let y_out = stick_scale
+        * (stick_params.affine_coeffs[region][2] * x_in
+            + stick_params.affine_coeffs[region][3] * y_in);
+
+    // TODO: here, add calibration step shenanigans
+
+    (x_out, y_out)
 }

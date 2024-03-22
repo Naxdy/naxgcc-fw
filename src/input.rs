@@ -14,18 +14,21 @@ use embassy_rp::{
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Instant, Timer};
+use libm::{fmaxf, fmin, fminf};
 use packed_struct::derive::PackedStruct;
 
 use crate::{
     filter::{run_waveshaping, WaveshapingValues},
     gcc_hid::GcReport,
-    stick::{linearize, run_kalman, FilterGains, StickParams},
+    stick::{linearize, notch_remap, run_kalman, FilterGains, StickParams},
     PackedFloat, ADDR_OFFSET, FLASH_SIZE,
 };
 
 pub static GCC_SIGNAL: Signal<CriticalSectionRawMutex, GcReport> = Signal::new();
 
 static STICK_SIGNAL: Signal<CriticalSectionRawMutex, StickState> = Signal::new();
+static STICK_HYST_VAL: f32 = 0.3;
+static FLOAT_ORIGIN: f32 = 127.5;
 
 #[derive(Debug, Clone, Default, Format, PackedStruct)]
 #[packed_struct(endian = "msb")]
@@ -40,8 +43,13 @@ pub struct ControllerConfig {
     pub cx_waveshaping: u8,
     #[packed_field(size_bits = "8")]
     pub cy_waveshaping: u8,
+    #[packed_field(size_bits = "8")]
+    pub astick_analog_scaler: u8,
+    #[packed_field(size_bits = "8")]
+    pub cstick_analog_scaler: u8,
 }
 
+#[derive(Clone, Debug, Default)]
 struct StickState {
     ax: u8,
     ay: u8,
@@ -127,6 +135,7 @@ async fn update_stick_states<
     mut spi: &mut Spi<'a, I, M>,
     mut spi_acs: &mut Output<'a, Acs>,
     mut spi_ccs: &mut Output<'a, Ccs>,
+    current_stick_state: &StickState,
     controlstick_params: &StickParams,
     cstick_params: &StickParams,
     controller_config: &ControllerConfig,
@@ -135,7 +144,7 @@ async fn update_stick_states<
     cstick_waveshaping_values: &mut WaveshapingValues,
     old_stick_pos: &mut StickPositions,
     raw_stick_values: &mut RawStickValues,
-) {
+) -> StickState {
     let mut adc_count = 0u32;
     let mut ax_sum = 0u32;
     let mut ay_sum = 0u32;
@@ -216,7 +225,7 @@ async fn update_stick_states<
         filter_gains,
     );
 
-    let pos_x =
+    let pos_x: f32 =
         filter_gains.x_smoothing * shaped_x + (1.0 - filter_gains.x_smoothing) * old_stick_pos.x;
     let pos_y =
         filter_gains.y_smoothing * shaped_y + (1.0 - filter_gains.y_smoothing) * old_stick_pos.y;
@@ -247,12 +256,65 @@ async fn update_stick_states<
 
     // phob optionally runs a median filter here, but we leave it for now
 
-    STICK_SIGNAL.signal(StickState {
-        ax: 127,
-        ay: 127,
-        cx: 127,
-        cy: 127,
-    })
+    let (mut remapped_x, mut remapped_y) = notch_remap(
+        pos_x,
+        pos_y,
+        controlstick_params,
+        controller_config,
+        Stick::ControlStick,
+    );
+    let (mut remapped_cx, mut remapped_cy) = notch_remap(
+        pos_cx_filt,
+        pos_cy_filt,
+        cstick_params,
+        controller_config,
+        Stick::CStick,
+    );
+    let (remapped_x_unfiltered, remapped_y_unfiltered) = notch_remap(
+        raw_stick_values.ax_linearized,
+        raw_stick_values.ay_linearized,
+        controlstick_params,
+        controller_config,
+        Stick::ControlStick,
+    );
+    let (remapped_cx_unfiltered, remapped_cy_unfiltered) = notch_remap(
+        raw_stick_values.cx_linearized,
+        raw_stick_values.cy_linearized,
+        cstick_params,
+        controller_config,
+        Stick::CStick,
+    );
+
+    remapped_x = fminf(125., fmaxf(-125., remapped_x));
+    remapped_y = fminf(125., fmaxf(-125., remapped_y));
+    remapped_cx = fminf(125., fmaxf(-125., remapped_cx));
+    remapped_cy = fminf(125., fmaxf(-125., remapped_cy));
+    raw_stick_values.ax_unfiltered = fminf(125., fmaxf(-125., remapped_x_unfiltered));
+    raw_stick_values.ay_unfiltered = fminf(125., fmaxf(-125., remapped_y_unfiltered));
+    raw_stick_values.cx_unfiltered = fminf(125., fmaxf(-125., remapped_cx_unfiltered));
+    raw_stick_values.cy_unfiltered = fminf(125., fmaxf(-125., remapped_cy_unfiltered));
+
+    let mut out_stick_state = current_stick_state.clone();
+
+    let diff_x = (remapped_x + FLOAT_ORIGIN) - current_stick_state.ax as f32;
+    if (diff_x > (1.0 + STICK_HYST_VAL)) || (diff_x < -STICK_HYST_VAL) {
+        out_stick_state.ax = (remapped_x + FLOAT_ORIGIN) as u8;
+    }
+    let diff_y = (remapped_y + FLOAT_ORIGIN) - current_stick_state.ay as f32;
+    if (diff_y > (1.0 + STICK_HYST_VAL)) || (diff_y < -STICK_HYST_VAL) {
+        out_stick_state.ay = (remapped_y + FLOAT_ORIGIN) as u8;
+    }
+
+    let diff_cx = (remapped_cx + FLOAT_ORIGIN) - current_stick_state.cx as f32;
+    if (diff_cx > (1.0 + STICK_HYST_VAL)) || (diff_cx < -STICK_HYST_VAL) {
+        out_stick_state.cx = (remapped_cx + FLOAT_ORIGIN) as u8;
+    }
+    let diff_cy = (remapped_cy + FLOAT_ORIGIN) - current_stick_state.cy as f32;
+    if (diff_cy > (1.0 + STICK_HYST_VAL)) || (diff_cy < -STICK_HYST_VAL) {
+        out_stick_state.cy = (remapped_cy + FLOAT_ORIGIN) as u8;
+    }
+
+    out_stick_state
 }
 
 fn update_button_states<
@@ -335,7 +397,8 @@ pub async fn input_loop(
 
     let stick_state_fut = async {
         loop {
-            // update_stick_states(&mut spi, &mut spi_acs, &mut spi_ccs, 1.0).await;
+            // current_stick_state = update_stick_states(&mut spi, &mut spi_acs, &mut spi_ccs, 1.0).await;
+            // STICK_SIGNAL.signal(current_stick_state.clone());
         }
     };
 
