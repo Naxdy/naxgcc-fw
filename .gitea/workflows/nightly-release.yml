@@ -4,6 +4,8 @@ on:
   push:
     branches: ["main"]
 
+# fleeb
+
 concurrency:
   group: main
   cancel-in-progress: true
@@ -31,9 +33,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build firmware image
         run: |
-          attic watch-store "${{ vars.BINARY_CACHE_NAME }}" &
           nix build .# -o dist --print-build-logs
-          attic push "${{ vars.BINARY_CACHE_NAME }}" dist
+      - name: Push derivations to binary cache
+        run: |
+          cd /nix/store
+          attic push "${{ vars.BINARY_CACHE_NAME }}" $(ls /nix/store --ignore='*.drv' --ignore='*fake_nixpkgs*')
       - name: Publish nightly release
         uses: https://gitea.com/actions/gitea-release-action@v1.3.0
         with:
