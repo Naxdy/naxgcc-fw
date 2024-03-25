@@ -4,8 +4,6 @@ on:
   push:
     branches: ["main"]
 
-# fleeb
-
 concurrency:
   group: main
   cancel-in-progress: true
