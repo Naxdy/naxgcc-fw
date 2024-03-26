@@ -35,6 +35,15 @@ jobs:
         run: |
           cd /nix/store
           attic push "${{ vars.BINARY_CACHE_NAME }}" $(ls /nix/store --ignore='*.drv' --ignore='*fake_nixpkgs*')
+      - name: (Re-)generate tag
+        run: |
+          git config --global user.email "noreply@naxdy.org"
+          git config --global user.name "Naxbot"
+          git fetch --tags
+          git tag -d nightly || true
+          git tag nightly -m "Nightly Release"
+          git checkout nightly
+          git push --set-upstream origin nightly --force
       - name: Publish nightly release
         uses: https://gitea.com/actions/gitea-release-action@v1.3.0
         with:
