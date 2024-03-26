@@ -9,7 +9,7 @@
     flake-utils.url = "github:numtide/flake-utils";
 
     embassy-rs-patched = {
-      url = "github:Naxdy/embassy?ref=naxgcc-fw";
+      url = "git+ssh://gitea@git.naxdy.org/NaxdyOrg/embassy?ref=naxgcc-fw";
       flake = false;
     };
 

@@ -5,16 +5,16 @@
       "locked": {
         "lastModified": 1710754402,
         "narHash": "sha256-HyTw5VQXlSqz9UOq0Dc6G/NWNzQOPXf3PNWffMkfLC4=",
-        "owner": "Naxdy",
-        "repo": "embassy",
+        "ref": "naxgcc-fw",
         "rev": "2ee4657727b9679998d941de00b43e1754f570bf",
-        "type": "github"
+        "revCount": 6754,
+        "type": "git",
+        "url": "ssh://gitea@git.naxdy.org/NaxdyOrg/embassy"
       },
       "original": {
-        "owner": "Naxdy",
         "ref": "naxgcc-fw",
-        "repo": "embassy",
-        "type": "github"
+        "type": "git",
+        "url": "ssh://gitea@git.naxdy.org/NaxdyOrg/embassy"
       }
     },
     "flake-utils": {
