@@ -15,7 +15,7 @@ use defmt::{debug, info, Format};
 use embassy_executor::Executor;
 use embassy_rp::{
     bind_interrupts,
-    flash::{Async, Flash, ERASE_SIZE},
+    flash::{Async, Flash},
     gpio::{self, Input},
     multicore::{spawn_core1, Stack},
     peripherals::USB,
@@ -78,12 +78,6 @@ fn main() -> ! {
 
     let mut uid = [0u8; 8];
     flash.blocking_unique_id(&mut uid).unwrap();
-
-    flash
-        .blocking_erase(ADDR_OFFSET, ADDR_OFFSET + ERASE_SIZE as u32)
-        .unwrap();
-
-    flash.blocking_write(ADDR_OFFSET, &[0xAB]).unwrap();
 
     debug!("Read unique id: {:02X}", uid);
 
