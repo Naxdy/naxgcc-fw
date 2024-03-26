@@ -10,8 +10,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: instance-wide
-    container: nixpkgs/nix-flakes:latest
+    runs-on: nix-flakes
 
     steps:
       - name: Set up packages
