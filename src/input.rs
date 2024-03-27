@@ -1,4 +1,4 @@
-use defmt::{debug, info};
+use defmt::{debug, info, trace, Format};
 use embassy_futures::{join::join, yield_now};
 use embassy_rp::{
     flash::{Async, Flash},
@@ -45,7 +45,7 @@ struct StickPositions {
     cy: f32,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Format)]
 struct RawStickValues {
     a_linearized: XyValuePair<f32>,
     c_linearized: XyValuePair<f32>,
@@ -182,8 +182,7 @@ async fn update_stick_states<
         y: (cy_sum as f32) / (adc_count as f32) / 4096.0f32,
     };
 
-    debug!("Raw Control Stick: {:?}", raw_controlstick);
-    debug!("Raw C Stick: {:?}", raw_cstick);
+    trace!("Raw Control Stick: {}", raw_controlstick);
 
     raw_stick_values.a_raw = raw_controlstick;
     raw_stick_values.c_raw = raw_cstick;
@@ -199,106 +198,144 @@ async fn update_stick_states<
     raw_stick_values.c_linearized.x = pos_cx;
     raw_stick_values.c_linearized.y = pos_cy;
 
+    trace!("Raw Stick Values 001: {:?}", raw_stick_values);
+
     let (x_pos_filt, y_pos_filt) =
         kalman_state.run_kalman(x_z, y_z, &controller_config.astick_config, &filter_gains);
 
-    let (shaped_x, shaped_y) = run_waveshaping(
+    let shaped_astick = match run_waveshaping(
         x_pos_filt,
         y_pos_filt,
         controller_config.astick_config.x_waveshaping,
         controller_config.astick_config.y_waveshaping,
         controlstick_waveshaping_values,
         &filter_gains,
-    );
+    ) {
+        (x, y) => XyValuePair { x, y },
+    };
 
-    let pos_x: f32 =
-        filter_gains.smoothing.x * shaped_x + (1.0 - filter_gains.smoothing.x) * old_stick_pos.x;
-    let pos_y =
-        filter_gains.smoothing.y * shaped_y + (1.0 - filter_gains.smoothing.y) * old_stick_pos.y;
+    trace!("Shaped Controlstick: {}", shaped_astick);
+
+    let pos_x: f32 = filter_gains.smoothing.x * shaped_astick.x
+        + (1.0 - filter_gains.smoothing.x) * old_stick_pos.x;
+    let pos_y = filter_gains.smoothing.y * shaped_astick.y
+        + (1.0 - filter_gains.smoothing.y) * old_stick_pos.y;
     old_stick_pos.x = pos_x;
     old_stick_pos.y = pos_y;
 
-    let (shaped_cx, shaped_cy) = run_waveshaping(
+    let shaped_cstick = match run_waveshaping(
         pos_cx,
         pos_cy,
         controller_config.cstick_config.x_waveshaping,
         controller_config.cstick_config.y_waveshaping,
         cstick_waveshaping_values,
         &filter_gains,
-    );
+    ) {
+        (x, y) => XyValuePair { x, y },
+    };
 
-    let old_cx_pos = old_stick_pos.cx;
-    let old_cy_pos = old_stick_pos.cy;
-    old_stick_pos.cx = shaped_cx;
-    old_stick_pos.cy = shaped_cy;
+    let old_c_pos = XyValuePair {
+        x: old_stick_pos.cx,
+        y: old_stick_pos.cy,
+    };
+    old_stick_pos.cx = shaped_cstick.x;
+    old_stick_pos.cy = shaped_cstick.y;
 
     let x_weight_1 = filter_gains.c_smoothing.x;
     let x_weight_2 = 1.0 - x_weight_1;
     let y_weight_1 = filter_gains.c_smoothing.y;
     let y_weight_2 = 1.0 - y_weight_1;
 
-    let pos_cx_filt = x_weight_1 * shaped_cx + x_weight_2 * old_cx_pos;
-    let pos_cy_filt = y_weight_1 * shaped_cy + y_weight_2 * old_cy_pos;
+    let pos_cx_filt = x_weight_1 * shaped_cstick.x + x_weight_2 * old_c_pos.x;
+    let pos_cy_filt = y_weight_1 * shaped_cstick.y + y_weight_2 * old_c_pos.y;
 
     // phob optionally runs a median filter here, but we leave it for now
 
-    let (mut remapped_x, mut remapped_y) = notch_remap(
+    trace!("Controlstick position: {}, {}", pos_x, pos_y);
+
+    let mut remapped = match notch_remap(
         pos_x,
         pos_y,
         controlstick_params,
         controller_config,
         Stick::ControlStick,
-    );
-    let (mut remapped_cx, mut remapped_cy) = notch_remap(
+        false,
+    ) {
+        (x, y) => XyValuePair { x, y },
+    };
+    let mut remapped_c = match notch_remap(
         pos_cx_filt,
         pos_cy_filt,
         cstick_params,
         controller_config,
         Stick::CStick,
-    );
-    let (remapped_x_unfiltered, remapped_y_unfiltered) = notch_remap(
+        false,
+    ) {
+        (x, y) => XyValuePair { x, y },
+    };
+    let remapped_unfiltered = match notch_remap(
         raw_stick_values.a_linearized.x,
         raw_stick_values.a_linearized.y,
         controlstick_params,
         controller_config,
         Stick::ControlStick,
-    );
-    let (remapped_cx_unfiltered, remapped_cy_unfiltered) = notch_remap(
+        false,
+    ) {
+        (x, y) => XyValuePair { x, y },
+    };
+    let remapped_c_unfiltered = match notch_remap(
         raw_stick_values.c_linearized.x,
         raw_stick_values.c_linearized.y,
         cstick_params,
         controller_config,
         Stick::CStick,
-    );
+        false,
+    ) {
+        (x, y) => XyValuePair { x, y },
+    };
 
-    remapped_x = fminf(125., fmaxf(-125., remapped_x));
-    remapped_y = fminf(125., fmaxf(-125., remapped_y));
-    remapped_cx = fminf(125., fmaxf(-125., remapped_cx));
-    remapped_cy = fminf(125., fmaxf(-125., remapped_cy));
-    raw_stick_values.a_unfiltered.x = fminf(125., fmaxf(-125., remapped_x_unfiltered));
-    raw_stick_values.a_unfiltered.y = fminf(125., fmaxf(-125., remapped_y_unfiltered));
-    raw_stick_values.c_unfiltered.x = fminf(125., fmaxf(-125., remapped_cx_unfiltered));
-    raw_stick_values.c_unfiltered.y = fminf(125., fmaxf(-125., remapped_cy_unfiltered));
+    trace!("Remapped Control Stick: {}", remapped);
+
+    remapped = XyValuePair {
+        x: fminf(125., fmaxf(-125., remapped.x)),
+        y: fminf(125., fmaxf(-125., remapped.y)),
+    };
+    remapped_c = XyValuePair {
+        x: fminf(125., fmaxf(-125., remapped_c.x)),
+        y: fminf(125., fmaxf(-125., remapped_c.y)),
+    };
+    raw_stick_values.a_unfiltered.x = fminf(125., fmaxf(-125., remapped_unfiltered.x));
+    raw_stick_values.a_unfiltered.y = fminf(125., fmaxf(-125., remapped_unfiltered.y));
+    raw_stick_values.c_unfiltered.x = fminf(125., fmaxf(-125., remapped_c_unfiltered.x));
+    raw_stick_values.c_unfiltered.y = fminf(125., fmaxf(-125., remapped_c_unfiltered.y));
 
     let mut out_stick_state = current_stick_state.clone();
 
-    let diff_x = (remapped_x + FLOAT_ORIGIN) - current_stick_state.ax as f32;
+    let diff_x = (remapped.x + FLOAT_ORIGIN) - current_stick_state.ax as f32;
     if (diff_x > (1.0 + STICK_HYST_VAL)) || (diff_x < -STICK_HYST_VAL) {
-        out_stick_state.ax = (remapped_x + FLOAT_ORIGIN) as u8;
+        out_stick_state.ax = (remapped.x + FLOAT_ORIGIN) as u8;
     }
-    let diff_y = (remapped_y + FLOAT_ORIGIN) - current_stick_state.ay as f32;
+    let diff_y = (remapped.y + FLOAT_ORIGIN) - current_stick_state.ay as f32;
     if (diff_y > (1.0 + STICK_HYST_VAL)) || (diff_y < -STICK_HYST_VAL) {
-        out_stick_state.ay = (remapped_y + FLOAT_ORIGIN) as u8;
+        out_stick_state.ay = (remapped.y + FLOAT_ORIGIN) as u8;
     }
 
-    let diff_cx = (remapped_cx + FLOAT_ORIGIN) - current_stick_state.cx as f32;
+    let diff_cx = (remapped_c.x + FLOAT_ORIGIN) - current_stick_state.cx as f32;
     if (diff_cx > (1.0 + STICK_HYST_VAL)) || (diff_cx < -STICK_HYST_VAL) {
-        out_stick_state.cx = (remapped_cx + FLOAT_ORIGIN) as u8;
+        out_stick_state.cx = (remapped_c.x + FLOAT_ORIGIN) as u8;
     }
-    let diff_cy = (remapped_cy + FLOAT_ORIGIN) - current_stick_state.cy as f32;
+    let diff_cy = (remapped_c.y + FLOAT_ORIGIN) - current_stick_state.cy as f32;
     if (diff_cy > (1.0 + STICK_HYST_VAL)) || (diff_cy < -STICK_HYST_VAL) {
-        out_stick_state.cy = (remapped_cy + FLOAT_ORIGIN) as u8;
+        out_stick_state.cy = (remapped_c.y + FLOAT_ORIGIN) as u8;
     }
+
+    trace!(
+        "Control stick: {}, {}, C-stick: {}, {}",
+        out_stick_state.ax,
+        out_stick_state.ay,
+        out_stick_state.cx,
+        out_stick_state.cy
+    );
 
     out_stick_state
 }
@@ -403,7 +440,7 @@ pub async fn input_loop(
         let mut last_loop_time = Instant::now();
 
         loop {
-            let timer = Timer::after_millis(1);
+            let timer = Timer::after_micros(1000);
 
             current_stick_state = update_stick_states(
                 &mut spi,
@@ -424,10 +461,12 @@ pub async fn input_loop(
 
             timer.await;
 
-            debug!(
-                "Loop took {} us",
-                (Instant::now() - last_loop_time).as_micros()
-            );
+            match (Instant::now() - last_loop_time).as_micros() {
+                a if a > 1100 => {
+                    debug!("Loop took {} us", a);
+                }
+                _ => {}
+            };
 
             last_loop_time = Instant::now();
 

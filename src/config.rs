@@ -112,6 +112,8 @@ pub struct StickConfig {
     #[packed_field(size_bits = "8")]
     pub y_snapback: i8, // not used for CStick
     #[packed_field(size_bits = "8")]
+    pub cardinal_snapping: i8, // not used for CStick
+    #[packed_field(size_bits = "8")]
     pub x_smoothing: u8,
     #[packed_field(size_bits = "8")]
     pub y_smoothing: u8,
@@ -132,7 +134,8 @@ impl Default for StickConfig {
             y_snapback: 0,
             x_smoothing: 0,
             y_smoothing: 0,
-            analog_scaler: 0,
+            cardinal_snapping: 0,
+            analog_scaler: 100,
             temp_cal_points_x: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
             temp_cal_points_y: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
             angles: *DEFAULT_ANGLES.to_packed_float_array(),
@@ -147,9 +150,9 @@ pub struct ControllerConfig {
     pub config_revision: u8,
     #[packed_field(size_bits = "8")]
     pub config_version: u8,
-    #[packed_field(size_bytes = "327")]
+    #[packed_field(size_bytes = "328")]
     pub astick_config: StickConfig,
-    #[packed_field(size_bytes = "327")]
+    #[packed_field(size_bytes = "328")]
     pub cstick_config: StickConfig,
 }
 
@@ -168,7 +171,7 @@ impl ControllerConfig {
     pub fn from_flash_memory(
         mut flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
     ) -> Result<Self, embassy_rp::flash::Error> {
-        let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = [0u8; 656]; // ControllerConfig byte size
+        let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = [0u8; 658]; // ControllerConfig byte size
         flash.blocking_read(ADDR_OFFSET, &mut controller_config_packed)?;
 
         match ControllerConfig::unpack(&controller_config_packed).unwrap() {

@@ -3,7 +3,7 @@
 use core::f32::consts::PI;
 
 use defmt::{debug, Format};
-use libm::{atan2f, cosf, fabs, roundf, sinf, sqrtf};
+use libm::{atan2f, cosf, fabs, fabsf, roundf, sinf, sqrtf};
 
 use crate::{
     config::{ControllerConfig, StickConfig, DEFAULT_NOTCH_STATUS},
@@ -583,6 +583,7 @@ pub fn notch_remap(
     stick_params: &StickParams,
     controller_config: &ControllerConfig,
     which_stick: Stick,
+    is_calibrating: bool,
 ) -> (f32, f32) {
     //determine the angle between the x unit vector and the current position vector
     let angle = match atan2f(y_in, x_in) {
@@ -608,14 +609,40 @@ pub fn notch_remap(
         Stick::CStick => controller_config.cstick_config.analog_scaler as f32 / 100.,
     };
 
-    let x_out = stick_scale
+    let mut x_out = stick_scale
         * (stick_params.affine_coeffs[region][0] * x_in
             + stick_params.affine_coeffs[region][1] * y_in);
-    let y_out = stick_scale
+    let mut y_out = stick_scale
         * (stick_params.affine_coeffs[region][2] * x_in
             + stick_params.affine_coeffs[region][3] * y_in);
 
-    // TODO: here, add calibration step shenanigans
+    if !is_calibrating {
+        let stick_config = match which_stick {
+            Stick::ControlStick => &controller_config.astick_config,
+            Stick::CStick => &controller_config.cstick_config,
+        };
+
+        if stick_config.cardinal_snapping > 0 {
+            if fabsf(x_out) < stick_config.cardinal_snapping as f32 + 0.5 && fabsf(y_out) >= 79.5 {
+                x_out = 0.;
+            }
+            if fabsf(y_out) < stick_config.cardinal_snapping as f32 + 0.5 && fabsf(x_out) >= 79.5 {
+                y_out = 0.;
+            }
+        } else if stick_config.cardinal_snapping == -1 {
+            if fabsf(x_out) < 6.5 && fabsf(y_out) >= 79.5 {
+                x_out = 0.;
+            }
+            if fabsf(y_out) < 6.5 && fabsf(x_out) >= 79.5 {
+                y_out = 0.;
+            }
+        }
+
+        if fabsf(x_out) < 3. && fabsf(y_out) < 3. {
+            x_out = 0.;
+            y_out = 0.;
+        }
+    }
 
     (x_out, y_out)
 }
