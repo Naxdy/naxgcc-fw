@@ -11,7 +11,7 @@ use embassy_rp::{
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
 use crate::{
-    packed_float::{PackedFloat, ToPackedFloatArray},
+    helpers::{PackedFloat, ToPackedFloatArray},
     stick::{NotchStatus, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES},
     ADDR_OFFSET, FLASH_SIZE,
 };

@@ -7,8 +7,8 @@
 mod config;
 mod filter;
 mod gcc_hid;
+mod helpers;
 mod input;
-mod packed_float;
 mod stick;
 
 use defmt::{debug, info};

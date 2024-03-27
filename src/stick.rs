@@ -7,8 +7,8 @@ use libm::{atan2f, cosf, fabs, roundf, sinf, sqrtf};
 
 use crate::{
     config::{ControllerConfig, StickConfig, DEFAULT_NOTCH_STATUS},
+    helpers::ToRegularArray,
     input::Stick,
-    packed_float::ToRegularArray,
 };
 
 /// fit order for the linearization

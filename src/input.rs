@@ -16,7 +16,7 @@ use libm::{fmaxf, fminf};
 
 use crate::{
     config::ControllerConfig,
-    filter::{run_kalman, run_waveshaping, FilterGains, WaveshapingValues, FILTER_GAINS},
+    filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
     gcc_hid::GcReport,
     stick::{linearize, notch_remap, StickParams},
     FLASH_SIZE,
@@ -125,6 +125,7 @@ async fn update_stick_states<
     cstick_waveshaping_values: &mut WaveshapingValues,
     old_stick_pos: &mut StickPositions,
     raw_stick_values: &mut RawStickValues,
+    kalman_state: &mut KalmanState,
 ) -> StickState {
     let mut adc_count = 0u32;
     let mut ax_sum = 0u32;
@@ -203,7 +204,8 @@ async fn update_stick_states<
     raw_stick_values.cx_linearized = pos_cx;
     raw_stick_values.cy_linearized = pos_cy;
 
-    let (x_pos_filt, y_pos_filt) = run_kalman(x_z, y_z, controller_config, &filter_gains);
+    let (x_pos_filt, y_pos_filt) =
+        kalman_state.run_kalman(x_z, y_z, &controller_config.astick_config, &filter_gains);
 
     let (shaped_x, shaped_y) = run_waveshaping(
         x_pos_filt,
@@ -215,9 +217,9 @@ async fn update_stick_states<
     );
 
     let pos_x: f32 =
-        filter_gains.x_smoothing * shaped_x + (1.0 - filter_gains.x_smoothing) * old_stick_pos.x;
+        filter_gains.smoothing.x * shaped_x + (1.0 - filter_gains.smoothing.x) * old_stick_pos.x;
     let pos_y =
-        filter_gains.y_smoothing * shaped_y + (1.0 - filter_gains.y_smoothing) * old_stick_pos.y;
+        filter_gains.smoothing.y * shaped_y + (1.0 - filter_gains.smoothing.y) * old_stick_pos.y;
     old_stick_pos.x = pos_x;
     old_stick_pos.y = pos_y;
 
@@ -235,9 +237,9 @@ async fn update_stick_states<
     old_stick_pos.cx = shaped_cx;
     old_stick_pos.cy = shaped_cy;
 
-    let x_weight_1 = filter_gains.c_xsmoothing;
+    let x_weight_1 = filter_gains.c_smoothing.x;
     let x_weight_2 = 1.0 - x_weight_1;
-    let y_weight_1 = filter_gains.c_ysmoothing;
+    let y_weight_1 = filter_gains.c_smoothing.y;
     let y_weight_2 = 1.0 - y_weight_1;
 
     let pos_cx_filt = x_weight_1 * shaped_cx + x_weight_2 * old_cx_pos;
@@ -401,6 +403,7 @@ pub async fn input_loop(
         let mut old_stick_pos = StickPositions::default();
         let mut cstick_waveshaping_values = WaveshapingValues::default();
         let mut controlstick_waveshaping_values = WaveshapingValues::default();
+        let mut kalman_state = KalmanState::default();
 
         loop {
             current_stick_state = update_stick_states(
@@ -416,6 +419,7 @@ pub async fn input_loop(
                 &mut cstick_waveshaping_values,
                 &mut old_stick_pos,
                 &mut raw_stick_values,
+                &mut kalman_state,
             )
             .await;
 

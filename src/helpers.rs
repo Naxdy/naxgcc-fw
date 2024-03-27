@@ -46,3 +46,9 @@ impl Deref for PackedFloat {
         &self.0
     }
 }
+
+#[derive(Debug, Clone, Format, Default, Copy)]
+pub struct XyValuePair<T> {
+    pub x: T,
+    pub y: T,
+}
