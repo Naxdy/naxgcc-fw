@@ -1,10 +1,11 @@
-use libm::{fmin, fminf};
+use libm::fminf;
 
 use crate::{
     input::{ControllerConfig, Stick},
     stick::FilterGains,
 };
 
+#[derive(Debug, Clone, Default)]
 pub struct WaveshapingValues {
     pub old_x_pos: f32,
     pub old_y_pos: f32,

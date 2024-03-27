@@ -1,9 +1,9 @@
 use core::task::Poll;
 
-use defmt::{debug, Format};
+use defmt::{debug, info, warn, Format};
 use embassy_futures::{join::join, yield_now};
 use embassy_rp::{
-    flash::{Async, Flash},
+    flash::{Async, Flash, ERASE_SIZE},
     gpio::{Input, Output, Pin},
     peripherals::{
         FLASH, PIN_10, PIN_11, PIN_16, PIN_17, PIN_18, PIN_19, PIN_20, PIN_21, PIN_22, PIN_23,
@@ -15,7 +15,7 @@ use embassy_rp::{
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Instant, Timer};
 use libm::{fmaxf, fmin, fminf};
-use packed_struct::derive::PackedStruct;
+use packed_struct::{derive::PackedStruct, PackedStruct};
 
 use crate::{
     filter::{run_waveshaping, WaveshapingValues},
@@ -27,12 +27,16 @@ use crate::{
 pub static GCC_SIGNAL: Signal<CriticalSectionRawMutex, GcReport> = Signal::new();
 
 static STICK_SIGNAL: Signal<CriticalSectionRawMutex, StickState> = Signal::new();
-static STICK_HYST_VAL: f32 = 0.3;
-static FLOAT_ORIGIN: f32 = 127.5;
+const STICK_HYST_VAL: f32 = 0.3;
+const FLOAT_ORIGIN: f32 = 127.5;
 
-#[derive(Debug, Clone, Default, Format, PackedStruct)]
+pub const CONTROLLER_CONFIG_REVISION: u8 = 1;
+
+#[derive(Debug, Clone, Format, PackedStruct)]
 #[packed_struct(endian = "msb")]
 pub struct ControllerConfig {
+    #[packed_field(size_bits = "8")]
+    pub config_revision: u8,
     #[packed_field(size_bits = "8")]
     pub config_version: u8,
     #[packed_field(size_bits = "8")]
@@ -47,6 +51,39 @@ pub struct ControllerConfig {
     pub astick_analog_scaler: u8,
     #[packed_field(size_bits = "8")]
     pub cstick_analog_scaler: u8,
+    #[packed_field(size_bits = "8")]
+    pub x_snapback: i8,
+    #[packed_field(size_bits = "8")]
+    pub y_snapback: i8,
+    #[packed_field(size_bits = "8")]
+    pub x_smoothing: u8,
+    #[packed_field(size_bits = "8")]
+    pub y_smoothing: u8,
+    #[packed_field(size_bits = "8")]
+    pub c_xsmoothing: u8,
+    #[packed_field(size_bits = "8")]
+    pub c_ysmoothing: u8,
+}
+
+impl Default for ControllerConfig {
+    fn default() -> Self {
+        Self {
+            config_revision: CONTROLLER_CONFIG_REVISION,
+            config_version: 0,
+            ax_waveshaping: 0,
+            ay_waveshaping: 0,
+            cx_waveshaping: 0,
+            cy_waveshaping: 0,
+            astick_analog_scaler: 0,
+            cstick_analog_scaler: 0,
+            x_snapback: 0,
+            y_snapback: 0,
+            x_smoothing: 0,
+            y_smoothing: 0,
+            c_xsmoothing: 0,
+            c_ysmoothing: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -57,6 +94,7 @@ struct StickState {
     cy: u8,
 }
 
+#[derive(Clone, Debug, Default)]
 struct StickPositions {
     x: f32,
     y: f32,
@@ -64,6 +102,7 @@ struct StickPositions {
     cy: f32,
 }
 
+#[derive(Clone, Debug, Default)]
 struct RawStickValues {
     ax_linearized: f32,
     ay_linearized: f32,
@@ -388,17 +427,57 @@ pub async fn input_loop(
     gcc_state.cstick_x = 127;
     gcc_state.cstick_y = 127;
 
-    let mut uid = [0u8; 1];
-    flash.blocking_read(ADDR_OFFSET, &mut uid).unwrap();
+    let mut controller_config_packed = [0u8; 14]; // ControllerConfig byte size
+    flash
+        .blocking_read(ADDR_OFFSET, &mut controller_config_packed)
+        .unwrap();
 
-    debug!("Read from flash: {:02X}", uid);
-
-    // TODO: load controller config here
+    let controller_config = match ControllerConfig::unpack(&controller_config_packed).unwrap() {
+        a if a.config_revision == CONTROLLER_CONFIG_REVISION => a,
+        a => {
+            warn!("Outdated controller config detected ({:02X}), or controller config was never present, using default.", a.config_revision);
+            let cfg = ControllerConfig::default();
+            info!("Writing default controller config to flash.");
+            flash
+                .blocking_erase(ADDR_OFFSET, ADDR_OFFSET + ERASE_SIZE as u32)
+                .unwrap();
+            flash
+                .blocking_write(ADDR_OFFSET, &cfg.pack().unwrap())
+                .unwrap();
+            cfg
+        }
+    };
 
     let stick_state_fut = async {
+        let mut current_stick_state = StickState {
+            ax: 127,
+            ay: 127,
+            cx: 127,
+            cy: 127,
+        };
+        let mut raw_stick_values = RawStickValues::default();
+        let mut old_stick_pos = StickPositions::default();
+        let mut cstick_waveshaping_values = WaveshapingValues::default();
+        let mut controlstick_waveshaping_values = WaveshapingValues::default();
+
         loop {
-            // current_stick_state = update_stick_states(&mut spi, &mut spi_acs, &mut spi_ccs, 1.0).await;
-            // STICK_SIGNAL.signal(current_stick_state.clone());
+            current_stick_state = update_stick_states(
+                &mut spi,
+                &mut spi_acs,
+                &mut spi_ccs,
+                &current_stick_state,
+                &controlstick_params,
+                &cstick_params,
+                &controller_config,
+                &filter_gains,
+                &mut controlstick_waveshaping_values,
+                &mut cstick_waveshaping_values,
+                &mut old_stick_pos,
+                &mut raw_stick_values,
+            )
+            .await;
+
+            STICK_SIGNAL.signal(current_stick_state.clone());
         }
     };
 

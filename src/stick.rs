@@ -1,9 +1,9 @@
 // vast majority of this is taken from Phob firmware
 
-use core::f32::consts::PI;
+use core::{f32::consts::PI, iter::Filter};
 
 use defmt::Format;
-use libm::{atan2f, fabs};
+use libm::{atan2f, fabs, powf};
 
 use crate::{
     input::{ControllerConfig, Stick},
@@ -15,6 +15,23 @@ const FIT_ORDER: usize = 3;
 const NUM_COEFFS: usize = FIT_ORDER + 1;
 const NO_OF_NOTCHES: usize = 16;
 const MAX_ORDER: usize = 20;
+
+/// Filter gains for 800Hz, the ones for 1000Hz are provided by `get_norm_gains`
+pub const FILTER_GAINS: FilterGains = FilterGains {
+    max_stick: 100.,
+    x_vel_decay: 0.1,
+    y_vel_decay: 0.1,
+    x_vel_pos_factor: 0.01,
+    y_vel_pos_factor: 0.01,
+    x_vel_damp: 0.125,
+    y_vel_damp: 0.125,
+    vel_thresh: 1.,
+    accel_thresh: 3.,
+    x_smoothing: 0.0,
+    y_smoothing: 0.0,
+    c_xsmoothing: 0.0,
+    c_ysmoothing: 0.0,
+};
 
 #[derive(Clone, Debug, Default, Format)]
 pub struct StickParams {
@@ -319,4 +336,56 @@ pub fn notch_remap(
     // TODO: here, add calibration step shenanigans
 
     (x_out, y_out)
+}
+
+fn vel_damp_from_snapback(snapback: i8) -> f32 {
+    match snapback {
+        a if a >= 0 => 0.125 * powf(2., (snapback - 4) as f32 / 3.0),
+        _ => 1. - 0.25 * powf(2., (snapback + 4) as f32 / 3.0),
+    }
+}
+
+/// Returns filter gains for 1000Hz polling rate
+pub fn get_norm_gains(controller_config: &ControllerConfig) -> FilterGains {
+    let mut gains = FILTER_GAINS.clone();
+
+    gains.x_vel_damp = vel_damp_from_snapback(controller_config.x_snapback);
+    gains.y_vel_damp = vel_damp_from_snapback(controller_config.y_snapback);
+
+    gains.x_smoothing = controller_config.x_smoothing as f32 / 10.;
+    gains.y_smoothing = controller_config.y_smoothing as f32 / 10.;
+
+    gains.c_xsmoothing = controller_config.c_xsmoothing as f32 / 10.;
+    gains.c_ysmoothing = controller_config.c_ysmoothing as f32 / 10.;
+
+    // The below is assuming the sticks to be polled at 1000Hz
+    let time_factor = 1.0 / 1.2;
+    let time_divisor = 1.2 / 1.0;
+
+    let vel_thresh = 1.0 / (gains.vel_thresh * time_factor);
+    let accel_thresh = 1.0 / (gains.accel_thresh * time_factor);
+
+    FilterGains {
+        max_stick: gains.max_stick * gains.max_stick,
+        x_vel_decay: gains.x_vel_decay * time_factor,
+        y_vel_decay: gains.y_vel_decay * time_factor,
+        x_vel_pos_factor: gains.x_vel_pos_factor * time_factor,
+        y_vel_pos_factor: gains.y_vel_pos_factor * time_factor,
+        x_vel_damp: gains.x_vel_damp
+            * match controller_config.x_snapback {
+                a if a >= 0 => time_factor,
+                _ => 1.0,
+            },
+        y_vel_damp: gains.y_vel_damp
+            * match controller_config.y_snapback {
+                a if a >= 0 => time_factor,
+                _ => 1.0,
+            },
+        vel_thresh,
+        accel_thresh,
+        x_smoothing: powf(1.0 - gains.x_smoothing, time_divisor),
+        y_smoothing: powf(1.0 - gains.y_smoothing, time_divisor),
+        c_xsmoothing: powf(1.0 - gains.c_xsmoothing, time_divisor),
+        c_ysmoothing: powf(1.0 - gains.c_ysmoothing, time_divisor),
+    }
 }
