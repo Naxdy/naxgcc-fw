@@ -13,7 +13,7 @@ use embassy_rp::{
     spi::Spi,
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use embassy_time::{Instant, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use libm::{fmaxf, fminf};
 
 use crate::{
@@ -139,7 +139,11 @@ async fn update_stick_states<
     let end_time = Instant::now() + embassy_time::Duration::from_millis(1);
     let timer = Timer::at(end_time);
 
-    while Instant::now() < end_time {
+    let mut loop_time = Duration::from_millis(0);
+
+    while Instant::now() < end_time - loop_time {
+        let loop_start = Instant::now();
+
         adc_count += 1;
         ax_sum += read_ext_adc(
             Stick::ControlStick,
@@ -169,6 +173,8 @@ async fn update_stick_states<
             &mut spi_acs,
             &mut spi_ccs,
         ) as u32;
+
+        loop_time = Instant::now() - loop_start;
 
         // with this, we can poll the sticks at 1000Hz (ish), while updating
         // the rest of the controller (the buttons) much faster, to ensure
