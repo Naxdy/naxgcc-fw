@@ -38,8 +38,8 @@ pub struct StickParams {
     pub fit_coeffs_y: [f32; NUM_COEFFS],
 
     // these are the notch remap parameters
-    pub affine_coeffs: [[f32; 16]; 4], // affine transformation coefficients for all regions of the stick
-    pub boundary_angles: [f32; 4], // angles at the boundaries between regions of the stick (in the plane)
+    pub affine_coeffs: [[f32; 4]; 16], // affine transformation coefficients for all regions of the stick
+    pub boundary_angles: [f32; 16], // angles at the boundaries between regions of the stick (in the plane)
 }
 
 impl StickParams {
@@ -313,8 +313,8 @@ impl LinearizedCalibration {
 
 #[derive(Clone, Debug, Default)]
 struct NotchCalibration {
-    affine_coeffs: [[f32; 16]; 4],
-    boundary_angles: [f32; 4],
+    affine_coeffs: [[f32; 4]; 16],
+    boundary_angles: [f32; 16],
 }
 
 impl NotchCalibration {
@@ -388,10 +388,10 @@ impl NotchCalibration {
             );
 
             out.boundary_angles[i - 1] = match atan2f(
-                cleaned_calibration_points.cleaned_points_y[i]
-                    - cleaned_calibration_points.cleaned_points_y[0],
-                cleaned_calibration_points.cleaned_points_x[i]
-                    - cleaned_calibration_points.cleaned_points_x[0],
+                linearized_calibration.linearized_points_y[i]
+                    - linearized_calibration.linearized_points_y[0],
+                linearized_calibration.linearized_points_x[i]
+                    - linearized_calibration.linearized_points_x[0],
             ) {
                 a if a < out.boundary_angles[0] => a + 2. * PI,
                 a => a,
