@@ -18,7 +18,7 @@ use crate::{
 
 /// This needs to be incremented for ANY change to ControllerConfig
 /// else we risk loading uninitialized memory.
-pub const CONTROLLER_CONFIG_REVISION: u8 = 2;
+pub const CONTROLLER_CONFIG_REVISION: u8 = 1;
 
 pub const DEFAULT_NOTCH_STATUS: [NotchStatus; NO_OF_NOTCHES] = [
     NotchStatus::Cardinal,

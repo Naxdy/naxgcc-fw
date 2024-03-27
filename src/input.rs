@@ -1,4 +1,4 @@
-use defmt::info;
+use defmt::{debug, info};
 use embassy_futures::{join::join, yield_now};
 use embassy_rp::{
     flash::{Async, Flash},
@@ -18,6 +18,7 @@ use crate::{
     config::ControllerConfig,
     filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
     gcc_hid::GcReport,
+    helpers::XyValuePair,
     stick::{linearize, notch_remap, StickParams},
     FLASH_SIZE,
 };
@@ -46,18 +47,12 @@ struct StickPositions {
 
 #[derive(Clone, Debug, Default)]
 struct RawStickValues {
-    ax_linearized: f32,
-    ay_linearized: f32,
-    cx_linearized: f32,
-    cy_linearized: f32,
-    ax_raw: f32,
-    ay_raw: f32,
-    cx_raw: f32,
-    cy_raw: f32,
-    ax_unfiltered: f32,
-    ay_unfiltered: f32,
-    cx_unfiltered: f32,
-    cy_unfiltered: f32,
+    a_linearized: XyValuePair<f32>,
+    c_linearized: XyValuePair<f32>,
+    a_raw: XyValuePair<f32>,
+    c_raw: XyValuePair<f32>,
+    a_unfiltered: XyValuePair<f32>,
+    c_unfiltered: XyValuePair<f32>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -85,7 +80,7 @@ fn read_ext_adc<'a, Acs: Pin, Ccs: Pin, I: embassy_rp::spi::Instance, M: embassy
         buf = [0b11110000; 3];
     }
 
-    if which_stick == Stick::CStick {
+    if which_stick == Stick::ControlStick {
         spi_acs.set_low();
     } else {
         spi_ccs.set_low();
@@ -135,9 +130,7 @@ async fn update_stick_states<
 
     // TODO: lower interval possible?
 
-    let end_time = Instant::now() + embassy_time::Duration::from_millis(1);
-    let timer = Timer::at(end_time);
-
+    let end_time = Instant::now() + embassy_time::Duration::from_micros(500);
     let mut loop_time = Duration::from_millis(0);
 
     while Instant::now() < end_time - loop_time {
@@ -173,36 +166,38 @@ async fn update_stick_states<
             &mut spi_ccs,
         ) as u32;
 
-        loop_time = Instant::now() - loop_start;
-
         // with this, we can poll the sticks at 1000Hz (ish), while updating
         // the rest of the controller (the buttons) much faster, to ensure
         // better input integrity for button inputs.
         yield_now().await;
+        loop_time = Instant::now() - loop_start;
     }
 
-    timer.await;
+    let raw_controlstick = XyValuePair {
+        x: (ax_sum as f32) / (adc_count as f32) / 4096.0f32,
+        y: (ay_sum as f32) / (adc_count as f32) / 4096.0f32,
+    };
+    let raw_cstick = XyValuePair {
+        x: (cx_sum as f32) / (adc_count as f32) / 4096.0f32,
+        y: (cy_sum as f32) / (adc_count as f32) / 4096.0f32,
+    };
 
-    let raw_controlstick_x = (ax_sum as f32) / (adc_count as f32) / 4096.0f32;
-    let raw_controlstick_y = (ay_sum as f32) / (adc_count as f32) / 4096.0f32;
-    let raw_cstick_x = (cx_sum as f32) / (adc_count as f32) / 4096.0f32;
-    let raw_cstick_y = (cy_sum as f32) / (adc_count as f32) / 4096.0f32;
+    debug!("Raw Control Stick: {:?}", raw_controlstick);
+    debug!("Raw C Stick: {:?}", raw_cstick);
 
-    raw_stick_values.ax_raw = raw_controlstick_x;
-    raw_stick_values.ay_raw = raw_controlstick_y;
-    raw_stick_values.cx_raw = raw_cstick_x;
-    raw_stick_values.cy_raw = raw_cstick_y;
+    raw_stick_values.a_raw = raw_controlstick;
+    raw_stick_values.c_raw = raw_cstick;
 
-    let x_z = linearize(raw_controlstick_x, &controlstick_params.fit_coeffs_x);
-    let y_z = linearize(raw_controlstick_y, &controlstick_params.fit_coeffs_y);
+    let x_z = linearize(raw_controlstick.x, &controlstick_params.fit_coeffs.x);
+    let y_z = linearize(raw_controlstick.y, &controlstick_params.fit_coeffs.y);
 
-    let pos_cx = linearize(raw_cstick_x, &cstick_params.fit_coeffs_x);
-    let pos_cy = linearize(raw_cstick_y, &cstick_params.fit_coeffs_y);
+    let pos_cx = linearize(raw_cstick.x, &cstick_params.fit_coeffs.x);
+    let pos_cy = linearize(raw_cstick.y, &cstick_params.fit_coeffs.y);
 
-    raw_stick_values.ax_linearized = x_z;
-    raw_stick_values.ay_linearized = y_z;
-    raw_stick_values.cx_linearized = pos_cx;
-    raw_stick_values.cy_linearized = pos_cy;
+    raw_stick_values.a_linearized.x = x_z;
+    raw_stick_values.a_linearized.y = y_z;
+    raw_stick_values.c_linearized.x = pos_cx;
+    raw_stick_values.c_linearized.y = pos_cy;
 
     let (x_pos_filt, y_pos_filt) =
         kalman_state.run_kalman(x_z, y_z, &controller_config.astick_config, &filter_gains);
@@ -262,15 +257,15 @@ async fn update_stick_states<
         Stick::CStick,
     );
     let (remapped_x_unfiltered, remapped_y_unfiltered) = notch_remap(
-        raw_stick_values.ax_linearized,
-        raw_stick_values.ay_linearized,
+        raw_stick_values.a_linearized.x,
+        raw_stick_values.a_linearized.y,
         controlstick_params,
         controller_config,
         Stick::ControlStick,
     );
     let (remapped_cx_unfiltered, remapped_cy_unfiltered) = notch_remap(
-        raw_stick_values.cx_linearized,
-        raw_stick_values.cy_linearized,
+        raw_stick_values.c_linearized.x,
+        raw_stick_values.c_linearized.y,
         cstick_params,
         controller_config,
         Stick::CStick,
@@ -280,10 +275,10 @@ async fn update_stick_states<
     remapped_y = fminf(125., fmaxf(-125., remapped_y));
     remapped_cx = fminf(125., fmaxf(-125., remapped_cx));
     remapped_cy = fminf(125., fmaxf(-125., remapped_cy));
-    raw_stick_values.ax_unfiltered = fminf(125., fmaxf(-125., remapped_x_unfiltered));
-    raw_stick_values.ay_unfiltered = fminf(125., fmaxf(-125., remapped_y_unfiltered));
-    raw_stick_values.cx_unfiltered = fminf(125., fmaxf(-125., remapped_cx_unfiltered));
-    raw_stick_values.cy_unfiltered = fminf(125., fmaxf(-125., remapped_cy_unfiltered));
+    raw_stick_values.a_unfiltered.x = fminf(125., fmaxf(-125., remapped_x_unfiltered));
+    raw_stick_values.a_unfiltered.y = fminf(125., fmaxf(-125., remapped_y_unfiltered));
+    raw_stick_values.c_unfiltered.x = fminf(125., fmaxf(-125., remapped_cx_unfiltered));
+    raw_stick_values.c_unfiltered.y = fminf(125., fmaxf(-125., remapped_cy_unfiltered));
 
     let mut out_stick_state = current_stick_state.clone();
 
@@ -405,7 +400,11 @@ pub async fn input_loop(
         let mut controlstick_waveshaping_values = WaveshapingValues::default();
         let mut kalman_state = KalmanState::default();
 
+        let mut last_loop_time = Instant::now();
+
         loop {
+            let timer = Timer::after_millis(1);
+
             current_stick_state = update_stick_states(
                 &mut spi,
                 &mut spi_acs,
@@ -422,6 +421,15 @@ pub async fn input_loop(
                 &mut kalman_state,
             )
             .await;
+
+            timer.await;
+
+            debug!(
+                "Loop took {} us",
+                (Instant::now() - last_loop_time).as_micros()
+            );
+
+            last_loop_time = Instant::now();
 
             STICK_SIGNAL.signal(current_stick_state.clone());
         }

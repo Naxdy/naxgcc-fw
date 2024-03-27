@@ -7,7 +7,7 @@ use libm::{atan2f, cosf, fabs, roundf, sinf, sqrtf};
 
 use crate::{
     config::{ControllerConfig, StickConfig, DEFAULT_NOTCH_STATUS},
-    helpers::ToRegularArray,
+    helpers::{ToRegularArray, XyValuePair},
     input::Stick,
 };
 
@@ -34,8 +34,7 @@ const NOTCH_ADJUSTMENT_ORDER: [usize; NO_OF_ADJ_NOTCHES] = [2,           6,     
 #[derive(Clone, Debug, Default, Format)]
 pub struct StickParams {
     // these are the linearization coefficients
-    pub fit_coeffs_x: [f32; NUM_COEFFS],
-    pub fit_coeffs_y: [f32; NUM_COEFFS],
+    pub fit_coeffs: XyValuePair<[f32; NUM_COEFFS]>,
 
     // these are the notch remap parameters
     pub affine_coeffs: [[f32; 4]; 16], // affine transformation coefficients for all regions of the stick
@@ -59,8 +58,10 @@ impl StickParams {
         );
 
         Self {
-            fit_coeffs_x: linearized_cal.fit_coeffs_x.map(|e| e as f32),
-            fit_coeffs_y: linearized_cal.fit_coeffs_y.map(|e| e as f32),
+            fit_coeffs: XyValuePair {
+                x: linearized_cal.fit_coeffs.x.map(|e| e as f32),
+                y: linearized_cal.fit_coeffs.y.map(|e| e as f32),
+            },
             affine_coeffs: notch_cal.affine_coeffs,
             boundary_angles: notch_cal.boundary_angles,
         }
@@ -77,20 +78,22 @@ pub enum NotchStatus {
 
 #[derive(Clone, Debug)]
 struct CleanedCalibrationPoints {
-    pub cleaned_points_x: [f32; NO_OF_NOTCHES + 1],
-    pub cleaned_points_y: [f32; NO_OF_NOTCHES + 1],
-    pub notch_points_x: [f32; NO_OF_NOTCHES + 1],
-    pub notch_points_y: [f32; NO_OF_NOTCHES + 1],
+    pub cleaned_points: XyValuePair<[f32; NO_OF_NOTCHES + 1]>,
+    pub notch_points: XyValuePair<[f32; NO_OF_NOTCHES + 1]>,
     pub notch_status: [NotchStatus; NO_OF_NOTCHES],
 }
 
 impl Default for CleanedCalibrationPoints {
     fn default() -> Self {
         Self {
-            cleaned_points_x: [0f32; NO_OF_NOTCHES + 1],
-            cleaned_points_y: [0f32; NO_OF_NOTCHES + 1],
-            notch_points_x: [0f32; NO_OF_NOTCHES + 1],
-            notch_points_y: [0f32; NO_OF_NOTCHES + 1],
+            cleaned_points: XyValuePair {
+                x: [0f32; NO_OF_NOTCHES + 1],
+                y: [0f32; NO_OF_NOTCHES + 1],
+            },
+            notch_points: XyValuePair {
+                x: [0f32; NO_OF_NOTCHES + 1],
+                y: [0f32; NO_OF_NOTCHES + 1],
+            },
             notch_status: DEFAULT_NOTCH_STATUS,
         }
     }
@@ -113,14 +116,14 @@ impl CleanedCalibrationPoints {
 
         for i in 0..NO_OF_NOTCHES {
             // add the origin values to the first x,y point
-            out.cleaned_points_x[0] += cal_points_x[i * 2];
-            out.cleaned_points_y[0] += cal_points_y[i * 2];
+            out.cleaned_points.x[0] += cal_points_x[i * 2];
+            out.cleaned_points.y[0] += cal_points_y[i * 2];
 
             // copy the cal point into the cleaned list
-            out.cleaned_points_x[i + 1] = cal_points_x[i * 2 + 1];
-            out.cleaned_points_y[i + 1] = cal_points_y[i * 2 + 1];
+            out.cleaned_points.x[i + 1] = cal_points_x[i * 2 + 1];
+            out.cleaned_points.y[i + 1] = cal_points_y[i * 2 + 1];
 
-            (out.notch_points_x[i + 1], out.notch_points_y[i + 1]) =
+            (out.notch_points.x[i + 1], out.notch_points.y[i + 1]) =
                 match calc_stick_values(notch_angles[i]) {
                     (a, b) => (roundf(a), roundf(b)),
                 };
@@ -157,22 +160,22 @@ impl CleanedCalibrationPoints {
         let largest_y = y_by_size[y_by_size.len() - 1].0;
 
         // TODO: make this whole thing a function? it looks very ugly
-        out.cleaned_points_x[0] -= cal_points_x[smallest_x];
-        out.cleaned_points_x[0] -= cal_points_x[small_x];
-        out.cleaned_points_x[0] -= cal_points_x[large_x];
-        out.cleaned_points_x[0] -= cal_points_x[largest_x];
+        out.cleaned_points.x[0] -= cal_points_x[smallest_x];
+        out.cleaned_points.x[0] -= cal_points_x[small_x];
+        out.cleaned_points.x[0] -= cal_points_x[large_x];
+        out.cleaned_points.x[0] -= cal_points_x[largest_x];
 
-        out.cleaned_points_y[0] -= cal_points_y[smallest_y];
-        out.cleaned_points_y[0] -= cal_points_y[small_y];
-        out.cleaned_points_y[0] -= cal_points_y[large_y];
-        out.cleaned_points_y[0] -= cal_points_y[largest_y];
+        out.cleaned_points.y[0] -= cal_points_y[smallest_y];
+        out.cleaned_points.y[0] -= cal_points_y[small_y];
+        out.cleaned_points.y[0] -= cal_points_y[large_y];
+        out.cleaned_points.y[0] -= cal_points_y[largest_y];
 
-        out.cleaned_points_x[0] /= (NO_OF_NOTCHES - 4) as f32;
-        out.cleaned_points_y[0] /= (NO_OF_NOTCHES - 4) as f32;
+        out.cleaned_points.x[0] /= (NO_OF_NOTCHES - 4) as f32;
+        out.cleaned_points.y[0] /= (NO_OF_NOTCHES - 4) as f32;
 
         for i in 0..NO_OF_NOTCHES {
-            let delta_x = out.cleaned_points_x[i + 1] - out.cleaned_points_x[0];
-            let delta_y = out.cleaned_points_y[i + 1] - out.cleaned_points_y[0];
+            let delta_x = out.cleaned_points.x[i + 1] - out.cleaned_points.x[0];
+            let delta_y = out.cleaned_points.y[i + 1] - out.cleaned_points.y[0];
             let mag = sqrtf(delta_x * delta_x + delta_y * delta_y);
 
             // if the cleaned point was at the center and would be a firefox notch
@@ -181,15 +184,15 @@ impl CleanedCalibrationPoints {
                 let prev_index = ((i + NO_OF_NOTCHES - 1) % NO_OF_NOTCHES) + 1;
                 let next_index = ((i + 1) % NO_OF_NOTCHES) + 1;
 
-                out.cleaned_points_x[i + 1] =
-                    (out.cleaned_points_x[prev_index] + out.cleaned_points_x[next_index]) / 2.0;
-                out.cleaned_points_y[i + 1] =
-                    (out.cleaned_points_y[prev_index] + out.cleaned_points_y[next_index]) / 2.0;
+                out.cleaned_points.x[i + 1] =
+                    (out.cleaned_points.x[prev_index] + out.cleaned_points.x[next_index]) / 2.0;
+                out.cleaned_points.y[i + 1] =
+                    (out.cleaned_points.y[prev_index] + out.cleaned_points.y[next_index]) / 2.0;
 
-                out.notch_points_x[i + 1] =
-                    (out.notch_points_x[prev_index] + out.notch_points_x[next_index]) / 2.0;
-                out.notch_points_y[i + 1] =
-                    (out.notch_points_y[prev_index] + out.notch_points_y[next_index]) / 2.0;
+                out.notch_points.x[i + 1] =
+                    (out.notch_points.x[prev_index] + out.notch_points.x[next_index]) / 2.0;
+                out.notch_points.y[i + 1] =
+                    (out.notch_points.y[prev_index] + out.notch_points.y[next_index]) / 2.0;
 
                 debug!("Skipping notch {}", i + 1);
 
@@ -204,10 +207,10 @@ impl CleanedCalibrationPoints {
         for i in 0..=NO_OF_NOTCHES {
             debug!(
                 "Cleaned: ({}, {}), Notch: ({}, {})",
-                out.cleaned_points_x[i],
-                out.cleaned_points_y[i],
-                out.notch_points_x[i],
-                out.notch_points_y[i],
+                out.cleaned_points.x[i],
+                out.cleaned_points.y[i],
+                out.notch_points.x[i],
+                out.notch_points.y[i],
             );
         }
 
@@ -219,11 +222,9 @@ impl CleanedCalibrationPoints {
 
 #[derive(Clone, Debug, Default)]
 struct LinearizedCalibration {
-    pub fit_coeffs_x: [f64; NUM_COEFFS],
-    pub fit_coeffs_y: [f64; NUM_COEFFS],
+    pub fit_coeffs: XyValuePair<[f64; NUM_COEFFS]>,
 
-    pub linearized_points_x: [f32; NO_OF_NOTCHES + 1],
-    pub linearized_points_y: [f32; NO_OF_NOTCHES + 1],
+    pub linearized_points: XyValuePair<[f32; NO_OF_NOTCHES + 1]>,
 }
 
 impl LinearizedCalibration {
@@ -240,10 +241,12 @@ impl LinearizedCalibration {
         let mut fit_points_y = [0f64; 5];
 
         let in_x = cleaned_calibration_points
-            .cleaned_points_x
+            .cleaned_points
+            .x
             .map(|e| e as f64);
         let in_y = cleaned_calibration_points
-            .cleaned_points_y
+            .cleaned_points
+            .y
             .map(|e| e as f64);
 
         fit_points_x[0] = in_x[8 + 1];
@@ -281,10 +284,14 @@ impl LinearizedCalibration {
         }
 
         Self {
-            fit_coeffs_x,
-            fit_coeffs_y,
-            linearized_points_x,
-            linearized_points_y,
+            fit_coeffs: XyValuePair {
+                x: fit_coeffs_x,
+                y: fit_coeffs_y,
+            },
+            linearized_points: XyValuePair {
+                x: linearized_points_x,
+                y: linearized_points_y,
+            },
         }
     }
 }
@@ -307,40 +314,40 @@ impl NotchCalibration {
             let mut points_out = [[0f32; 3]; 3];
 
             if i == NO_OF_NOTCHES {
-                points_in[0][0] = linearized_calibration.linearized_points_x[0];
-                points_in[0][1] = linearized_calibration.linearized_points_x[i];
-                points_in[0][2] = linearized_calibration.linearized_points_x[1];
-                points_in[1][0] = linearized_calibration.linearized_points_y[0];
-                points_in[1][1] = linearized_calibration.linearized_points_y[i];
-                points_in[1][2] = linearized_calibration.linearized_points_y[1];
+                points_in[0][0] = linearized_calibration.linearized_points.x[0];
+                points_in[0][1] = linearized_calibration.linearized_points.x[i];
+                points_in[0][2] = linearized_calibration.linearized_points.x[1];
+                points_in[1][0] = linearized_calibration.linearized_points.y[0];
+                points_in[1][1] = linearized_calibration.linearized_points.y[i];
+                points_in[1][2] = linearized_calibration.linearized_points.y[1];
                 points_in[2][0] = 1.;
                 points_in[2][1] = 1.;
                 points_in[2][2] = 1.;
-                points_out[0][0] = cleaned_calibration_points.notch_points_x[0];
-                points_out[0][1] = cleaned_calibration_points.notch_points_x[i];
-                points_out[0][2] = cleaned_calibration_points.notch_points_x[1];
-                points_out[1][0] = cleaned_calibration_points.notch_points_y[0];
-                points_out[1][1] = cleaned_calibration_points.notch_points_y[i];
-                points_out[1][2] = cleaned_calibration_points.notch_points_y[1];
+                points_out[0][0] = cleaned_calibration_points.notch_points.x[0];
+                points_out[0][1] = cleaned_calibration_points.notch_points.x[i];
+                points_out[0][2] = cleaned_calibration_points.notch_points.x[1];
+                points_out[1][0] = cleaned_calibration_points.notch_points.y[0];
+                points_out[1][1] = cleaned_calibration_points.notch_points.y[i];
+                points_out[1][2] = cleaned_calibration_points.notch_points.y[1];
                 points_out[2][0] = 1.;
                 points_out[2][1] = 1.;
                 points_out[2][2] = 1.;
             } else {
-                points_in[0][0] = linearized_calibration.linearized_points_x[0];
-                points_in[0][1] = linearized_calibration.linearized_points_x[i];
-                points_in[0][2] = linearized_calibration.linearized_points_x[i + 1];
-                points_in[1][0] = linearized_calibration.linearized_points_y[0];
-                points_in[1][1] = linearized_calibration.linearized_points_y[i];
-                points_in[1][2] = linearized_calibration.linearized_points_y[i + 1];
+                points_in[0][0] = linearized_calibration.linearized_points.x[0];
+                points_in[0][1] = linearized_calibration.linearized_points.x[i];
+                points_in[0][2] = linearized_calibration.linearized_points.x[i + 1];
+                points_in[1][0] = linearized_calibration.linearized_points.y[0];
+                points_in[1][1] = linearized_calibration.linearized_points.y[i];
+                points_in[1][2] = linearized_calibration.linearized_points.y[i + 1];
                 points_in[2][0] = 1.;
                 points_in[2][1] = 1.;
                 points_in[2][2] = 1.;
-                points_out[0][0] = cleaned_calibration_points.notch_points_x[0];
-                points_out[0][1] = cleaned_calibration_points.notch_points_x[i];
-                points_out[0][2] = cleaned_calibration_points.notch_points_x[i + 1];
-                points_out[1][0] = cleaned_calibration_points.notch_points_y[0];
-                points_out[1][1] = cleaned_calibration_points.notch_points_y[i];
-                points_out[1][2] = cleaned_calibration_points.notch_points_y[i + 1];
+                points_out[0][0] = cleaned_calibration_points.notch_points.x[0];
+                points_out[0][1] = cleaned_calibration_points.notch_points.x[i];
+                points_out[0][2] = cleaned_calibration_points.notch_points.x[i + 1];
+                points_out[1][0] = cleaned_calibration_points.notch_points.y[0];
+                points_out[1][1] = cleaned_calibration_points.notch_points.y[i];
+                points_out[1][2] = cleaned_calibration_points.notch_points.y[i + 1];
                 points_out[2][0] = 1.;
                 points_out[2][1] = 1.;
                 points_out[2][2] = 1.;
@@ -366,10 +373,10 @@ impl NotchCalibration {
             );
 
             out.boundary_angles[i - 1] = match atan2f(
-                linearized_calibration.linearized_points_y[i]
-                    - linearized_calibration.linearized_points_y[0],
-                linearized_calibration.linearized_points_x[i]
-                    - linearized_calibration.linearized_points_x[0],
+                linearized_calibration.linearized_points.y[i]
+                    - linearized_calibration.linearized_points.y[0],
+                linearized_calibration.linearized_points.x[i]
+                    - linearized_calibration.linearized_points.x[0],
             ) {
                 a if a < out.boundary_angles[0] => a + 2. * PI,
                 a => a,
