@@ -84,11 +84,11 @@ fn main() -> ! {
     pwm_config.enable = true;
     pwm_config.compare_b = 255;
 
-    let pwm_rumble = Pwm::new_output_b(p.PWM_CH4, p.PIN_25, pwm_config.clone());
-    let pwm_brake = Pwm::new_output_b(p.PWM_CH6, p.PIN_29, pwm_config.clone());
+    // let pwm_rumble = Pwm::new_output_b(p.PWM_CH4, p.PIN_25, pwm_config.clone());
+    // let pwm_brake = Pwm::new_output_b(p.PWM_CH6, p.PIN_29, pwm_config.clone());
 
-    pwm_rumble.set_counter(255);
-    pwm_brake.set_counter(0);
+    // pwm_rumble.set_counter(0);
+    // pwm_brake.set_counter(255);
 
     executor0.run(|spawner| {
         spawner
@@ -106,8 +106,8 @@ fn main() -> ! {
                 Input::new(p.PIN_18, gpio::Pull::Up),
                 Input::new(p.PIN_19, gpio::Pull::Up),
                 Input::new(p.PIN_5, gpio::Pull::Up),
-                pwm_rumble,
-                pwm_brake,
+                // pwm_rumble,
+                // pwm_brake,
                 spi,
                 spi_acs,
                 spi_ccs,

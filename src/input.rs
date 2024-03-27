@@ -397,8 +397,8 @@ pub async fn input_loop(
     btn_x: Input<'static, PIN_18>,
     btn_y: Input<'static, PIN_19>,
     btn_start: Input<'static, PIN_5>,
-    pwm_rumble: Pwm<'static, PWM_CH4>,
-    pwm_brake: Pwm<'static, PWM_CH6>,
+    // pwm_rumble: Pwm<'static, PWM_CH4>,
+    // pwm_brake: Pwm<'static, PWM_CH6>,
     mut spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
     mut spi_acs: Output<'static, PIN_24>,
     mut spi_ccs: Output<'static, PIN_23>,
@@ -476,6 +476,8 @@ pub async fn input_loop(
 
     let input_fut = async {
         loop {
+            let timer = Timer::after_micros(500);
+
             update_button_states(
                 &mut gcc_state,
                 &btn_a,
@@ -492,7 +494,7 @@ pub async fn input_loop(
                 &btn_ddown,
             );
 
-            yield_now().await;
+            timer.await;
 
             // not every loop pass is going to update the stick state
             match STICK_SIGNAL.try_take() {

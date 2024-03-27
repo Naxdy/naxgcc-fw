@@ -260,7 +260,7 @@ pub async fn usb_transfer_loop(driver: Driver<'static, USB>, raw_serial: [u8; 8]
     usb_config.manufacturer = Some("Naxdy");
     usb_config.product = Some("NaxGCC");
     usb_config.serial_number = Some(serial);
-    usb_config.max_power = 100;
+    usb_config.max_power = 10;
     usb_config.max_packet_size_0 = 64;
     usb_config.device_class = 0;
     usb_config.device_protocol = 0;
