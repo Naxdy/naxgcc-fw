@@ -135,9 +135,11 @@ async fn update_stick_states<
     let mut cy_sum = 0u32;
 
     // TODO: lower interval possible?
-    let mut timer = Timer::at(Instant::now() + embassy_time::Duration::from_millis(1));
 
-    while embassy_futures::poll_once(&mut timer) != Poll::Ready(()) {
+    let end_time = Instant::now() + embassy_time::Duration::from_millis(1);
+    let timer = Timer::at(end_time);
+
+    while Instant::now() < end_time {
         adc_count += 1;
         ax_sum += read_ext_adc(
             Stick::ControlStick,
