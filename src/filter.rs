@@ -1,7 +1,7 @@
 use defmt::Format;
 use libm::{fminf, powf};
 
-use crate::input::{ControllerConfig, Stick};
+use crate::config::ControllerConfig;
 
 /// Filter gains for 800Hz, the ones for 1000Hz are provided by `get_norm_gains`
 pub const FILTER_GAINS: FilterGains = FilterGains {
@@ -85,7 +85,7 @@ pub struct FilterGains {
 
 impl FilterGains {
     /// Returns filter gains for 1000Hz polling rate
-    pub fn normalize_gains(&self, controller_config: &ControllerConfig) -> Self {
+    pub fn get_normalized_gains(&self, controller_config: &ControllerConfig) -> Self {
         let mut gains = self.clone();
 
         gains.x_vel_damp = vel_damp_from_snapback(controller_config.x_snapback);

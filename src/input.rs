@@ -1,9 +1,9 @@
 use core::task::Poll;
 
-use defmt::{debug, info, warn, Format};
+use defmt::info;
 use embassy_futures::{join::join, yield_now};
 use embassy_rp::{
-    flash::{Async, Flash, ERASE_SIZE},
+    flash::{Async, Flash},
     gpio::{Input, Output, Pin},
     peripherals::{
         FLASH, PIN_10, PIN_11, PIN_16, PIN_17, PIN_18, PIN_19, PIN_20, PIN_21, PIN_22, PIN_23,
@@ -14,18 +14,14 @@ use embassy_rp::{
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Instant, Timer};
-use libm::{fmaxf, fmin, fminf};
-use packed_struct::{derive::PackedStruct, PackedStruct};
+use libm::{fmaxf, fminf};
 
 use crate::{
+    config::ControllerConfig,
     filter::{run_kalman, run_waveshaping, FilterGains, WaveshapingValues, FILTER_GAINS},
     gcc_hid::GcReport,
-    packed_float::{PackedFloat, ToPackedFloatArray},
-    stick::{
-        linearize, notch_remap, StickParams, DEFAULT_ANGLES, DEFAULT_CAL_POINTS_X,
-        DEFAULT_CAL_POINTS_Y, NO_OF_NOTCHES,
-    },
-    ADDR_OFFSET, FLASH_SIZE,
+    stick::{linearize, notch_remap, StickParams},
+    FLASH_SIZE,
 };
 
 pub static GCC_SIGNAL: Signal<CriticalSectionRawMutex, GcReport> = Signal::new();
@@ -33,113 +29,6 @@ pub static GCC_SIGNAL: Signal<CriticalSectionRawMutex, GcReport> = Signal::new()
 static STICK_SIGNAL: Signal<CriticalSectionRawMutex, StickState> = Signal::new();
 const STICK_HYST_VAL: f32 = 0.3;
 const FLOAT_ORIGIN: f32 = 127.5;
-
-pub const CONTROLLER_CONFIG_REVISION: u8 = 2;
-
-#[derive(Debug, Clone, Format, PackedStruct)]
-#[packed_struct(endian = "msb")]
-pub struct ControllerConfig {
-    #[packed_field(size_bits = "8")]
-    pub config_revision: u8,
-    #[packed_field(size_bits = "8")]
-    pub config_version: u8,
-    #[packed_field(size_bits = "8")]
-    pub ax_waveshaping: u8,
-    #[packed_field(size_bits = "8")]
-    pub ay_waveshaping: u8,
-    #[packed_field(size_bits = "8")]
-    pub cx_waveshaping: u8,
-    #[packed_field(size_bits = "8")]
-    pub cy_waveshaping: u8,
-    #[packed_field(size_bits = "8")]
-    pub astick_analog_scaler: u8,
-    #[packed_field(size_bits = "8")]
-    pub cstick_analog_scaler: u8,
-    #[packed_field(size_bits = "8")]
-    pub x_snapback: i8,
-    #[packed_field(size_bits = "8")]
-    pub y_snapback: i8,
-    #[packed_field(size_bits = "8")]
-    pub x_smoothing: u8,
-    #[packed_field(size_bits = "8")]
-    pub y_smoothing: u8,
-    #[packed_field(size_bits = "8")]
-    pub c_xsmoothing: u8,
-    #[packed_field(size_bits = "8")]
-    pub c_ysmoothing: u8,
-    #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_ax: [PackedFloat; 32],
-    #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_ay: [PackedFloat; 32],
-    #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_cx: [PackedFloat; 32],
-    #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_cy: [PackedFloat; 32],
-    #[packed_field(element_size_bytes = "4")]
-    pub a_angles: [PackedFloat; 16],
-    #[packed_field(element_size_bytes = "4")]
-    pub c_angles: [PackedFloat; 16],
-}
-
-impl Default for ControllerConfig {
-    fn default() -> Self {
-        Self {
-            config_revision: CONTROLLER_CONFIG_REVISION,
-            config_version: 0,
-            ax_waveshaping: 0,
-            ay_waveshaping: 0,
-            cx_waveshaping: 0,
-            cy_waveshaping: 0,
-            astick_analog_scaler: 0,
-            cstick_analog_scaler: 0,
-            x_snapback: 0,
-            y_snapback: 0,
-            x_smoothing: 0,
-            y_smoothing: 0,
-            c_xsmoothing: 0,
-            c_ysmoothing: 0,
-            temp_cal_points_ax: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
-            temp_cal_points_ay: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
-            temp_cal_points_cx: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
-            temp_cal_points_cy: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
-            a_angles: *DEFAULT_ANGLES.to_packed_float_array(),
-            c_angles: *DEFAULT_ANGLES.to_packed_float_array(),
-        }
-    }
-}
-
-impl ControllerConfig {
-    pub fn from_flash_memory(
-        mut flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
-    ) -> Result<Self, embassy_rp::flash::Error> {
-        let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = [0u8; 654]; // ControllerConfig byte size
-        flash.blocking_read(ADDR_OFFSET, &mut controller_config_packed)?;
-
-        match ControllerConfig::unpack(&controller_config_packed).unwrap() {
-            a if a.config_revision == CONTROLLER_CONFIG_REVISION => {
-                info!("Controller config loaded from flash: {}", a);
-                Ok(a)
-            }
-            a => {
-                warn!("Outdated controller config detected ({:02X}), or controller config was never present, using default.", a.config_revision);
-                let cfg = ControllerConfig::default();
-                info!("Going to save default controller config.");
-                cfg.write_to_flash(&mut flash)?;
-                Ok(cfg)
-            }
-        }
-    }
-
-    pub fn write_to_flash(
-        &self,
-        flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
-    ) -> Result<(), embassy_rp::flash::Error> {
-        info!("Writing controller config to flash.");
-        flash.blocking_erase(ADDR_OFFSET, ADDR_OFFSET + ERASE_SIZE as u32)?;
-        flash.blocking_write(ADDR_OFFSET, &self.pack().unwrap())?;
-        Ok(())
-    }
-}
 
 #[derive(Clone, Debug, Default)]
 struct StickState {
@@ -493,7 +382,7 @@ pub async fn input_loop(
     let (controlstick_params, cstick_params) =
         StickParams::from_controller_config(&controller_config);
 
-    let filter_gains = FILTER_GAINS.normalize_gains(&controller_config);
+    let filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
 
     let stick_state_fut = async {
         let mut current_stick_state = StickState {

@@ -4,6 +4,7 @@
 
 #![no_std]
 #![no_main]
+mod config;
 mod filter;
 mod gcc_hid;
 mod input;

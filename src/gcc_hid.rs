@@ -1,21 +1,20 @@
+/**
+ * Communication with the console / PC over USB HID.
+ * Includes the HID report descriptor, and the GcReport struct.
+ */
 use core::default::Default;
 
-use defmt::{debug, error, info, trace, unwrap, warn, Debug2Format, Format};
-use embassy_futures::{
-    join::join,
-    select::{self, select, Either},
-};
+use defmt::{debug, info, trace, warn, Format};
+use embassy_futures::join::join;
 use embassy_rp::{peripherals::USB, usb::Driver};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant};
+
+use embassy_time::Instant;
 use embassy_usb::{
     class::hid::{HidReaderWriter, ReportId, RequestHandler, State},
     control::OutResponse,
     Builder, Handler,
 };
 use packed_struct::{derive::PackedStruct, PackedStruct};
-use portable_atomic::Ordering;
 
 use crate::input::GCC_SIGNAL;
 
@@ -238,27 +237,23 @@ impl Handler for MyDeviceHandler {
 pub async fn usb_transfer_loop(driver: Driver<'static, USB>, raw_serial: [u8; 8]) {
     let mut serial_buffer = [0u8; 64];
 
-    let serial = {
-        let s = format_no_std::show(
-            &mut serial_buffer,
-            format_args!(
-                "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-                raw_serial[0],
-                raw_serial[1],
-                raw_serial[2],
-                raw_serial[3],
-                raw_serial[4],
-                raw_serial[5],
-                raw_serial[6],
-                raw_serial[7]
-            ),
-        )
-        .unwrap();
+    let serial = format_no_std::show(
+        &mut serial_buffer,
+        format_args!(
+            "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+            raw_serial[0],
+            raw_serial[1],
+            raw_serial[2],
+            raw_serial[3],
+            raw_serial[4],
+            raw_serial[5],
+            raw_serial[6],
+            raw_serial[7]
+        ),
+    )
+    .unwrap();
 
-        info!("Detected flash with unique serial number {}", s);
-
-        s
-    };
+    info!("Detected flash with unique serial number {}", serial);
 
     trace!("Start of config");
     let mut usb_config = embassy_usb::Config::new(0x057e, 0x0337);

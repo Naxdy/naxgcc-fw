@@ -6,7 +6,8 @@ use defmt::{debug, Format};
 use libm::{atan2f, cosf, fabs, roundf, sinf, sqrtf};
 
 use crate::{
-    input::{ControllerConfig, Stick},
+    config::{ControllerConfig, DEFAULT_NOTCH_STATUS},
+    input::Stick,
     packed_float::ToRegularArray,
 };
 
@@ -20,84 +21,6 @@ const MAX_ORDER: usize = 20;
 
 /// 28 degrees; this is the max angular deflection of the stick.
 const MAX_STICK_ANGLE: f32 = 0.4886921906;
-
-const DEFAULT_NOTCH_STATUS: [NotchStatus; NO_OF_NOTCHES] = [
-    NotchStatus::Cardinal,
-    NotchStatus::TertActive,
-    NotchStatus::Secondary,
-    NotchStatus::TertActive,
-    NotchStatus::Cardinal,
-    NotchStatus::TertActive,
-    NotchStatus::Secondary,
-    NotchStatus::TertActive,
-    NotchStatus::Cardinal,
-    NotchStatus::TertActive,
-    NotchStatus::Secondary,
-    NotchStatus::TertActive,
-    NotchStatus::Cardinal,
-    NotchStatus::TertActive,
-    NotchStatus::Secondary,
-    NotchStatus::TertActive,
-];
-
-#[rustfmt::skip]
-pub const DEFAULT_CAL_POINTS_X: [f32; NO_OF_CALIBRATION_POINTS] = [
-    0.3010610568,0.3603937084,// right
-	0.3010903951,0.3000194135,
-	0.3005567843,0.3471911134,// up right
-	0.3006904343,0.3009976295,
-	0.3000800899,0.300985051,// up
-	0.3001020858,0.300852804,
-	0.3008746305,0.2548450139,// up left
-	0.3001434092,0.3012600593,
-	0.3011594091,0.2400535218,// left
-	0.3014621077,0.3011248469,
-	0.3010860944,0.2552106305,// down left
-	0.3002197989,0.3001679513,
-	0.3004438517,0.300486505,// down
-	0.3002766984,0.3012828579,
-	0.3014959877,0.346512936,// down right
-	0.3013398149,0.3007809916
-];
-
-#[rustfmt::skip]
-pub const DEFAULT_CAL_POINTS_Y: [f32; NO_OF_CALIBRATION_POINTS] = [
-    0.300092277, 0.3003803475,// right
-	0.3002205792,0.301004752,
-	0.3001241394,0.3464200104,// up right
-	0.3001331245,0.3011881186,
-	0.3010685972,0.3606900641,// up
-	0.3001520488,0.3010662947,
-	0.3008837105,0.3461478452,// up left
-	0.3011732026,0.3007367683,
-	0.3011345742,0.3000566197,// left
-	0.3006843288,0.3009673425,
-	0.3011228978,0.2547579852,// down left
-	0.3011177285,0.301264851,
-	0.3002376991,0.2403885431,// down
-	0.3006540818,0.3010588401,
-	0.3011093054,0.2555000655,// down right
-	0.3000802760,0.3008482317
-];
-
-pub const DEFAULT_ANGLES: [f32; NO_OF_NOTCHES] = [
-    0.,
-    PI / 8.0,
-    PI * 2. / 8.,
-    PI * 3. / 8.,
-    PI * 4. / 8.,
-    PI * 5. / 8.,
-    PI * 6. / 8.,
-    PI * 7. / 8.,
-    PI * 8. / 8.,
-    PI * 9. / 8.,
-    PI * 10. / 8.,
-    PI * 11. / 8.,
-    PI * 12. / 8.,
-    PI * 13. / 8.,
-    PI * 14. / 8.,
-    PI * 15. / 8.,
-];
 
 #[rustfmt::skip]
 //                                                             right        notch 1      up right     notch 2      up           notch 3      up left      notch 4      left         notch 5      down left    notch 6      down         notch 7      down right   notch 8
@@ -134,12 +57,40 @@ impl StickParams {
             &controller_config.c_angles.to_regular_array(),
         );
 
-        todo!()
+        let linearized_cal_astick =
+            LinearizedCalibration::from_calibration_points(&cleaned_cal_points_astick);
+        let linearized_cal_cstick =
+            LinearizedCalibration::from_calibration_points(&cleaned_cal_points_cstick);
+
+        let notch_cal_astick = NotchCalibration::from_cleaned_and_linearized_calibration(
+            &cleaned_cal_points_astick,
+            &linearized_cal_astick,
+        );
+        let notch_cal_cstick = NotchCalibration::from_cleaned_and_linearized_calibration(
+            &cleaned_cal_points_cstick,
+            &linearized_cal_cstick,
+        );
+
+        let stick_params_astick = Self {
+            fit_coeffs_x: linearized_cal_astick.fit_coeffs_x.map(|e| e as f32),
+            fit_coeffs_y: linearized_cal_astick.fit_coeffs_y.map(|e| e as f32),
+            affine_coeffs: notch_cal_astick.affine_coeffs,
+            boundary_angles: notch_cal_astick.boundary_angles,
+        };
+
+        let stick_params_cstick = Self {
+            fit_coeffs_x: linearized_cal_cstick.fit_coeffs_x.map(|e| e as f32),
+            fit_coeffs_y: linearized_cal_cstick.fit_coeffs_y.map(|e| e as f32),
+            affine_coeffs: notch_cal_cstick.affine_coeffs,
+            boundary_angles: notch_cal_cstick.boundary_angles,
+        };
+
+        (stick_params_astick, stick_params_cstick)
     }
 }
 
 #[derive(Clone, Debug, Format, Copy)]
-enum NotchStatus {
+pub enum NotchStatus {
     TertInactive,
     TertActive,
     Secondary,
@@ -293,8 +244,8 @@ struct LinearizedCalibration {
     pub fit_coeffs_x: [f64; NUM_COEFFS],
     pub fit_coeffs_y: [f64; NUM_COEFFS],
 
-    pub out_x: [f32; NO_OF_NOTCHES],
-    pub out_y: [f32; NO_OF_NOTCHES],
+    pub linearized_points_x: [f32; NO_OF_NOTCHES + 1],
+    pub linearized_points_y: [f32; NO_OF_NOTCHES + 1],
 }
 
 impl LinearizedCalibration {
@@ -306,9 +257,16 @@ impl LinearizedCalibration {
     ///
     ///	Outputs:
     ///		linearization fit coefficients for X and Y
-    pub fn from_calibration_points(in_x: &[f64; 17], in_y: &[f64; 17]) -> Self {
+    pub fn from_calibration_points(cleaned_calibration_points: &CleanedCalibrationPoints) -> Self {
         let mut fit_points_x = [0f64; 5];
         let mut fit_points_y = [0f64; 5];
+
+        let in_x = cleaned_calibration_points
+            .cleaned_points_x
+            .map(|e| e as f64);
+        let in_y = cleaned_calibration_points
+            .cleaned_points_y
+            .map(|e| e as f64);
 
         fit_points_x[0] = in_x[8 + 1];
         fit_points_x[1] = (in_x[6 + 1] + in_x[10 + 1]) / 2.0f64;
@@ -336,21 +294,146 @@ impl LinearizedCalibration {
         fit_coeffs_x[3] = fit_coeffs_x[3] - x_zero_error as f64;
         fit_coeffs_y[3] = fit_coeffs_y[3] - y_zero_error as f64;
 
-        let mut out_x = [0f32; NO_OF_NOTCHES];
-        let mut out_y = [0f32; NO_OF_NOTCHES];
+        let mut linearized_points_x = [0f32; NO_OF_NOTCHES + 1];
+        let mut linearized_points_y = [0f32; NO_OF_NOTCHES + 1];
 
         for i in 0..=NO_OF_NOTCHES {
-            out_x[i] = linearize(in_x[i] as f32, &fit_coeffs_x.map(|e| e as f32));
-            out_y[i] = linearize(in_y[i] as f32, &fit_coeffs_y.map(|e| e as f32));
+            linearized_points_x[i] = linearize(in_x[i] as f32, &fit_coeffs_x.map(|e| e as f32));
+            linearized_points_y[i] = linearize(in_y[i] as f32, &fit_coeffs_y.map(|e| e as f32));
         }
 
         Self {
             fit_coeffs_x,
             fit_coeffs_y,
-            out_x,
-            out_y,
+            linearized_points_x,
+            linearized_points_y,
         }
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct NotchCalibration {
+    affine_coeffs: [[f32; 16]; 4],
+    boundary_angles: [f32; 4],
+}
+
+impl NotchCalibration {
+    fn from_cleaned_and_linearized_calibration(
+        cleaned_calibration_points: &CleanedCalibrationPoints,
+        linearized_calibration: &LinearizedCalibration,
+    ) -> Self {
+        let mut out = Self::default();
+
+        for i in 1..=NO_OF_NOTCHES {
+            let mut points_in = [[0f32; 3]; 3];
+            let mut points_out = [[0f32; 3]; 3];
+
+            if i == NO_OF_NOTCHES {
+                points_in[0][0] = linearized_calibration.linearized_points_x[0];
+                points_in[0][1] = linearized_calibration.linearized_points_x[i];
+                points_in[0][2] = linearized_calibration.linearized_points_x[1];
+                points_in[1][0] = linearized_calibration.linearized_points_y[0];
+                points_in[1][1] = linearized_calibration.linearized_points_y[i];
+                points_in[1][2] = linearized_calibration.linearized_points_y[1];
+                points_in[2][0] = 1.;
+                points_in[2][1] = 1.;
+                points_in[2][2] = 1.;
+                points_out[0][0] = cleaned_calibration_points.notch_points_x[0];
+                points_out[0][1] = cleaned_calibration_points.notch_points_x[i];
+                points_out[0][2] = cleaned_calibration_points.notch_points_x[1];
+                points_out[1][0] = cleaned_calibration_points.notch_points_y[0];
+                points_out[1][1] = cleaned_calibration_points.notch_points_y[i];
+                points_out[1][2] = cleaned_calibration_points.notch_points_y[1];
+                points_out[2][0] = 1.;
+                points_out[2][1] = 1.;
+                points_out[2][2] = 1.;
+            } else {
+                points_in[0][0] = linearized_calibration.linearized_points_x[0];
+                points_in[0][1] = linearized_calibration.linearized_points_x[i];
+                points_in[0][2] = linearized_calibration.linearized_points_x[i + 1];
+                points_in[1][0] = linearized_calibration.linearized_points_y[0];
+                points_in[1][1] = linearized_calibration.linearized_points_y[i];
+                points_in[1][2] = linearized_calibration.linearized_points_y[i + 1];
+                points_in[2][0] = 1.;
+                points_in[2][1] = 1.;
+                points_in[2][2] = 1.;
+                points_out[0][0] = cleaned_calibration_points.notch_points_x[0];
+                points_out[0][1] = cleaned_calibration_points.notch_points_x[i];
+                points_out[0][2] = cleaned_calibration_points.notch_points_x[i + 1];
+                points_out[1][0] = cleaned_calibration_points.notch_points_y[0];
+                points_out[1][1] = cleaned_calibration_points.notch_points_y[i];
+                points_out[1][2] = cleaned_calibration_points.notch_points_y[i + 1];
+                points_out[2][0] = 1.;
+                points_out[2][1] = 1.;
+                points_out[2][2] = 1.;
+            }
+            debug!("In points: {:?}", points_in);
+            debug!("Out points: {:?}", points_out);
+
+            let temp = inverse(&points_in);
+
+            let a = matrix_mult(&points_out, &temp);
+
+            debug!("The transform matrix is: {:?}", a);
+
+            for j in 0..2 {
+                for k in 0..2 {
+                    out.affine_coeffs[i - 1][j * 2 + k] = a[j][k];
+                }
+            }
+
+            debug!(
+                "Transform coefficients for this region are: {:?}",
+                out.affine_coeffs[i - 1]
+            );
+
+            out.boundary_angles[i - 1] = match atan2f(
+                cleaned_calibration_points.cleaned_points_y[i]
+                    - cleaned_calibration_points.cleaned_points_y[0],
+                cleaned_calibration_points.cleaned_points_x[i]
+                    - cleaned_calibration_points.cleaned_points_x[0],
+            ) {
+                a if a < out.boundary_angles[0] => a + 2. * PI,
+                a => a,
+            };
+        }
+
+        out
+    }
+}
+
+fn inverse(in_mat: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    let mut out_mat = [[0f32; 3]; 3];
+
+    let det = in_mat[0][0] * (in_mat[1][1] * in_mat[2][2] - in_mat[1][2] * in_mat[2][1])
+        - in_mat[0][1] * (in_mat[1][0] * in_mat[2][2] - in_mat[1][2] * in_mat[2][0])
+        + in_mat[0][2] * (in_mat[1][0] * in_mat[2][1] - in_mat[1][1] * in_mat[2][0]);
+
+    out_mat[0][0] = (in_mat[1][1] * in_mat[2][2] - in_mat[1][2] * in_mat[2][1]) / det;
+    out_mat[0][1] = (in_mat[0][2] * in_mat[2][1] - in_mat[0][1] * in_mat[2][2]) / det;
+    out_mat[0][2] = (in_mat[0][1] * in_mat[1][2] - in_mat[0][2] * in_mat[1][1]) / det;
+    out_mat[1][0] = (in_mat[1][2] * in_mat[2][0] - in_mat[1][0] * in_mat[2][2]) / det;
+    out_mat[1][1] = (in_mat[0][0] * in_mat[2][2] - in_mat[0][2] * in_mat[2][0]) / det;
+    out_mat[1][2] = (in_mat[0][2] * in_mat[1][0] - in_mat[0][0] * in_mat[1][2]) / det;
+    out_mat[2][0] = (in_mat[1][0] * in_mat[2][1] - in_mat[1][1] * in_mat[2][0]) / det;
+    out_mat[2][1] = (in_mat[0][1] * in_mat[2][0] - in_mat[0][0] * in_mat[2][1]) / det;
+    out_mat[2][2] = (in_mat[0][0] * in_mat[1][1] - in_mat[0][1] * in_mat[1][0]) / det;
+
+    out_mat
+}
+
+fn matrix_mult(a: &[[f32; 3]; 3], b: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    let mut out = [[0f32; 3]; 3];
+
+    for i in 0..3 {
+        for j in 0..3 {
+            for k in 0..3 {
+                out[i][j] += a[i][k] * b[k][j];
+            }
+        }
+    }
+
+    out
 }
 
 /// Calculate the power of a number
