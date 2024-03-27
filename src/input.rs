@@ -22,8 +22,8 @@ use crate::{
     gcc_hid::GcReport,
     packed_float::{PackedFloat, ToPackedFloatArray},
     stick::{
-        linearize, notch_remap, StickParams, DEFAULT_CAL_POINTS_X, DEFAULT_CAL_POINTS_Y,
-        NO_OF_NOTCHES,
+        linearize, notch_remap, StickParams, DEFAULT_ANGLES, DEFAULT_CAL_POINTS_X,
+        DEFAULT_CAL_POINTS_Y, NO_OF_NOTCHES,
     },
     ADDR_OFFSET, FLASH_SIZE,
 };
@@ -34,7 +34,7 @@ static STICK_SIGNAL: Signal<CriticalSectionRawMutex, StickState> = Signal::new()
 const STICK_HYST_VAL: f32 = 0.3;
 const FLOAT_ORIGIN: f32 = 127.5;
 
-pub const CONTROLLER_CONFIG_REVISION: u8 = 1;
+pub const CONTROLLER_CONFIG_REVISION: u8 = 2;
 
 #[derive(Debug, Clone, Format, PackedStruct)]
 #[packed_struct(endian = "msb")]
@@ -102,8 +102,8 @@ impl Default for ControllerConfig {
             temp_cal_points_ay: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
             temp_cal_points_cx: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
             temp_cal_points_cy: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
-            a_angles: [PackedFloat::default(); NO_OF_NOTCHES],
-            c_angles: [PackedFloat::default(); NO_OF_NOTCHES],
+            a_angles: *DEFAULT_ANGLES.to_packed_float_array(),
+            c_angles: *DEFAULT_ANGLES.to_packed_float_array(),
         }
     }
 }
@@ -474,6 +474,12 @@ pub async fn input_loop(
     mut spi_acs: Output<'static, PIN_24>,
     mut spi_ccs: Output<'static, PIN_23>,
 ) {
+    if btn_a.is_low() && btn_x.is_low() && btn_y.is_low() {
+        info!("Detected reset button press, booting into flash.");
+        embassy_rp::rom_data::reset_to_usb_boot(0, 0);
+        loop {}
+    }
+
     let mut gcc_state = GcReport::default();
 
     // Set the stick states to the center

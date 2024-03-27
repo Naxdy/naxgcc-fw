@@ -14,13 +14,14 @@ use crate::{
 const FIT_ORDER: usize = 3;
 const NUM_COEFFS: usize = FIT_ORDER + 1;
 pub const NO_OF_NOTCHES: usize = 16;
+const NO_OF_ADJ_NOTCHES: usize = 12;
 pub const NO_OF_CALIBRATION_POINTS: usize = 32;
 const MAX_ORDER: usize = 20;
 
 /// 28 degrees; this is the max angular deflection of the stick.
 const MAX_STICK_ANGLE: f32 = 0.4886921906;
 
-const NOTCH_STATUS_DEFAULTS: [NotchStatus; NO_OF_NOTCHES] = [
+const DEFAULT_NOTCH_STATUS: [NotchStatus; NO_OF_NOTCHES] = [
     NotchStatus::Cardinal,
     NotchStatus::TertActive,
     NotchStatus::Secondary,
@@ -79,6 +80,34 @@ pub const DEFAULT_CAL_POINTS_Y: [f32; NO_OF_CALIBRATION_POINTS] = [
 	0.3000802760,0.3008482317
 ];
 
+pub const DEFAULT_ANGLES: [f32; NO_OF_NOTCHES] = [
+    0.,
+    PI / 8.0,
+    PI * 2. / 8.,
+    PI * 3. / 8.,
+    PI * 4. / 8.,
+    PI * 5. / 8.,
+    PI * 6. / 8.,
+    PI * 7. / 8.,
+    PI * 8. / 8.,
+    PI * 9. / 8.,
+    PI * 10. / 8.,
+    PI * 11. / 8.,
+    PI * 12. / 8.,
+    PI * 13. / 8.,
+    PI * 14. / 8.,
+    PI * 15. / 8.,
+];
+
+#[rustfmt::skip]
+//                                                             right        notch 1      up right     notch 2      up           notch 3      up left      notch 4      left         notch 5      down left    notch 6      down         notch 7      down right   notch 8
+//                                                             0            1            2            3            4            5            6            7            8            9            10           11           12           13           14           15
+const CALIBRATION_ORDER: [usize; NO_OF_CALIBRATION_POINTS] = [ 0, 1,        8, 9,       16, 17,       24, 25,      4, 5,        12, 13,      20, 21,      28, 29,      2, 3,        6, 7,        10, 11,      14, 15,      18, 19,      22, 23,      26, 27,      30, 31 ];
+
+#[rustfmt::skip]
+//                                                          up right     up left      down left    down right   notch 1      notch 2      notch 3      notch 4      notch 5      notch 6      notch 7      notch 8
+const NOTCH_ADJUSTMENT_ORDER: [usize; NO_OF_ADJ_NOTCHES] = [2,           6,           10,          14,          1,           3,           5,           7,           9,           11,          13,          15];
+
 #[derive(Clone, Debug, Default, Format)]
 pub struct StickParams {
     // these are the linearization coefficients
@@ -133,7 +162,7 @@ impl Default for CleanedCalibrationPoints {
             cleaned_points_y: [0f32; NO_OF_NOTCHES + 1],
             notch_points_x: [0f32; NO_OF_NOTCHES + 1],
             notch_points_y: [0f32; NO_OF_NOTCHES + 1],
-            notch_status: NOTCH_STATUS_DEFAULTS,
+            notch_status: DEFAULT_NOTCH_STATUS,
         }
     }
 }
@@ -238,7 +267,7 @@ impl CleanedCalibrationPoints {
                 // Mark that notch adjustment should be skipped for this
                 out.notch_status[i] = NotchStatus::TertInactive;
             } else {
-                out.notch_status[i] = NOTCH_STATUS_DEFAULTS[i];
+                out.notch_status[i] = DEFAULT_NOTCH_STATUS[i];
             }
         }
 
@@ -277,7 +306,7 @@ impl LinearizedCalibration {
     ///
     ///	Outputs:
     ///		linearization fit coefficients for X and Y
-    pub fn from_points(in_x: &[f64; 17], in_y: &[f64; 17]) -> Self {
+    pub fn from_calibration_points(in_x: &[f64; 17], in_y: &[f64; 17]) -> Self {
         let mut fit_points_x = [0f64; 5];
         let mut fit_points_y = [0f64; 5];
 
