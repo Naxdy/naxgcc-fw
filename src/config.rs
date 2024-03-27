@@ -100,47 +100,57 @@ const DEFAULT_ANGLES: [f32; NO_OF_NOTCHES] = [
 
 #[derive(Debug, Clone, Format, PackedStruct)]
 #[packed_struct(endian = "msb")]
+pub struct StickConfig {
+    #[packed_field(size_bits = "8")]
+    pub x_waveshaping: u8,
+    #[packed_field(size_bits = "8")]
+    pub y_waveshaping: u8,
+    #[packed_field(size_bits = "8")]
+    pub analog_scaler: u8,
+    #[packed_field(size_bits = "8")]
+    pub x_snapback: i8, // not used for CStick
+    #[packed_field(size_bits = "8")]
+    pub y_snapback: i8, // not used for CStick
+    #[packed_field(size_bits = "8")]
+    pub x_smoothing: u8,
+    #[packed_field(size_bits = "8")]
+    pub y_smoothing: u8,
+    #[packed_field(element_size_bytes = "4")]
+    pub temp_cal_points_x: [PackedFloat; 32],
+    #[packed_field(element_size_bytes = "4")]
+    pub temp_cal_points_y: [PackedFloat; 32],
+    #[packed_field(element_size_bytes = "4")]
+    pub angles: [PackedFloat; 16],
+}
+
+impl Default for StickConfig {
+    fn default() -> Self {
+        Self {
+            x_waveshaping: 0,
+            y_waveshaping: 0,
+            x_snapback: 0,
+            y_snapback: 0,
+            x_smoothing: 0,
+            y_smoothing: 0,
+            analog_scaler: 0,
+            temp_cal_points_x: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
+            temp_cal_points_y: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
+            angles: *DEFAULT_ANGLES.to_packed_float_array(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Format, PackedStruct)]
+#[packed_struct(endian = "msb")]
 pub struct ControllerConfig {
     #[packed_field(size_bits = "8")]
     pub config_revision: u8,
     #[packed_field(size_bits = "8")]
     pub config_version: u8,
-    #[packed_field(size_bits = "8")]
-    pub ax_waveshaping: u8,
-    #[packed_field(size_bits = "8")]
-    pub ay_waveshaping: u8,
-    #[packed_field(size_bits = "8")]
-    pub cx_waveshaping: u8,
-    #[packed_field(size_bits = "8")]
-    pub cy_waveshaping: u8,
-    #[packed_field(size_bits = "8")]
-    pub astick_analog_scaler: u8,
-    #[packed_field(size_bits = "8")]
-    pub cstick_analog_scaler: u8,
-    #[packed_field(size_bits = "8")]
-    pub x_snapback: i8,
-    #[packed_field(size_bits = "8")]
-    pub y_snapback: i8,
-    #[packed_field(size_bits = "8")]
-    pub x_smoothing: u8,
-    #[packed_field(size_bits = "8")]
-    pub y_smoothing: u8,
-    #[packed_field(size_bits = "8")]
-    pub c_xsmoothing: u8,
-    #[packed_field(size_bits = "8")]
-    pub c_ysmoothing: u8,
-    #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_ax: [PackedFloat; 32],
-    #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_ay: [PackedFloat; 32],
-    #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_cx: [PackedFloat; 32],
-    #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_cy: [PackedFloat; 32],
-    #[packed_field(element_size_bytes = "4")]
-    pub a_angles: [PackedFloat; 16],
-    #[packed_field(element_size_bytes = "4")]
-    pub c_angles: [PackedFloat; 16],
+    #[packed_field(size_bytes = "327")]
+    pub astick_config: StickConfig,
+    #[packed_field(size_bytes = "327")]
+    pub cstick_config: StickConfig,
 }
 
 impl Default for ControllerConfig {
@@ -148,24 +158,8 @@ impl Default for ControllerConfig {
         Self {
             config_revision: CONTROLLER_CONFIG_REVISION,
             config_version: 0,
-            ax_waveshaping: 0,
-            ay_waveshaping: 0,
-            cx_waveshaping: 0,
-            cy_waveshaping: 0,
-            astick_analog_scaler: 0,
-            cstick_analog_scaler: 0,
-            x_snapback: 0,
-            y_snapback: 0,
-            x_smoothing: 0,
-            y_smoothing: 0,
-            c_xsmoothing: 0,
-            c_ysmoothing: 0,
-            temp_cal_points_ax: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
-            temp_cal_points_ay: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
-            temp_cal_points_cx: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
-            temp_cal_points_cy: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
-            a_angles: *DEFAULT_ANGLES.to_packed_float_array(),
-            c_angles: *DEFAULT_ANGLES.to_packed_float_array(),
+            astick_config: StickConfig::default(),
+            cstick_config: StickConfig::default(),
         }
     }
 }
@@ -174,7 +168,7 @@ impl ControllerConfig {
     pub fn from_flash_memory(
         mut flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
     ) -> Result<Self, embassy_rp::flash::Error> {
-        let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = [0u8; 654]; // ControllerConfig byte size
+        let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = [0u8; 656]; // ControllerConfig byte size
         flash.blocking_read(ADDR_OFFSET, &mut controller_config_packed)?;
 
         match ControllerConfig::unpack(&controller_config_packed).unwrap() {

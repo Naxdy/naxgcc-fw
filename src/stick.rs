@@ -6,7 +6,7 @@ use defmt::{debug, Format};
 use libm::{atan2f, cosf, fabs, roundf, sinf, sqrtf};
 
 use crate::{
-    config::{ControllerConfig, DEFAULT_NOTCH_STATUS},
+    config::{ControllerConfig, StickConfig, DEFAULT_NOTCH_STATUS},
     input::Stick,
     packed_float::ToRegularArray,
 };
@@ -44,48 +44,26 @@ pub struct StickParams {
 
 impl StickParams {
     /// Generate StickParams structs for the sticks, returned as a tuple of (analog_stick, c_stick)
-    pub fn from_controller_config(controller_config: &ControllerConfig) -> (Self, Self) {
-        let cleaned_cal_points_astick = CleanedCalibrationPoints::from_temp_calibration_points(
-            &controller_config.temp_cal_points_ax.to_regular_array(),
-            &controller_config.temp_cal_points_ay.to_regular_array(),
-            &controller_config.a_angles.to_regular_array(),
+    pub fn from_stick_config(stick_config: &StickConfig) -> Self {
+        let cleaned_cal_points = CleanedCalibrationPoints::from_temp_calibration_points(
+            &stick_config.temp_cal_points_x.to_regular_array(),
+            &stick_config.temp_cal_points_y.to_regular_array(),
+            &stick_config.angles.to_regular_array(),
         );
 
-        let cleaned_cal_points_cstick = CleanedCalibrationPoints::from_temp_calibration_points(
-            &controller_config.temp_cal_points_cx.to_regular_array(),
-            &controller_config.temp_cal_points_cy.to_regular_array(),
-            &controller_config.c_angles.to_regular_array(),
+        let linearized_cal = LinearizedCalibration::from_calibration_points(&cleaned_cal_points);
+
+        let notch_cal = NotchCalibration::from_cleaned_and_linearized_calibration(
+            &cleaned_cal_points,
+            &linearized_cal,
         );
 
-        let linearized_cal_astick =
-            LinearizedCalibration::from_calibration_points(&cleaned_cal_points_astick);
-        let linearized_cal_cstick =
-            LinearizedCalibration::from_calibration_points(&cleaned_cal_points_cstick);
-
-        let notch_cal_astick = NotchCalibration::from_cleaned_and_linearized_calibration(
-            &cleaned_cal_points_astick,
-            &linearized_cal_astick,
-        );
-        let notch_cal_cstick = NotchCalibration::from_cleaned_and_linearized_calibration(
-            &cleaned_cal_points_cstick,
-            &linearized_cal_cstick,
-        );
-
-        let stick_params_astick = Self {
-            fit_coeffs_x: linearized_cal_astick.fit_coeffs_x.map(|e| e as f32),
-            fit_coeffs_y: linearized_cal_astick.fit_coeffs_y.map(|e| e as f32),
-            affine_coeffs: notch_cal_astick.affine_coeffs,
-            boundary_angles: notch_cal_astick.boundary_angles,
-        };
-
-        let stick_params_cstick = Self {
-            fit_coeffs_x: linearized_cal_cstick.fit_coeffs_x.map(|e| e as f32),
-            fit_coeffs_y: linearized_cal_cstick.fit_coeffs_y.map(|e| e as f32),
-            affine_coeffs: notch_cal_cstick.affine_coeffs,
-            boundary_angles: notch_cal_cstick.boundary_angles,
-        };
-
-        (stick_params_astick, stick_params_cstick)
+        Self {
+            fit_coeffs_x: linearized_cal.fit_coeffs_x.map(|e| e as f32),
+            fit_coeffs_y: linearized_cal.fit_coeffs_y.map(|e| e as f32),
+            affine_coeffs: notch_cal.affine_coeffs,
+            boundary_angles: notch_cal.boundary_angles,
+        }
     }
 }
 
@@ -619,8 +597,8 @@ pub fn notch_remap(
     };
 
     let stick_scale = match which_stick {
-        Stick::ControlStick => controller_config.astick_analog_scaler as f32 / 100.,
-        Stick::CStick => controller_config.cstick_analog_scaler as f32 / 100.,
+        Stick::ControlStick => controller_config.astick_config.analog_scaler as f32 / 100.,
+        Stick::CStick => controller_config.cstick_config.analog_scaler as f32 / 100.,
     };
 
     let x_out = stick_scale

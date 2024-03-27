@@ -88,14 +88,14 @@ impl FilterGains {
     pub fn get_normalized_gains(&self, controller_config: &ControllerConfig) -> Self {
         let mut gains = self.clone();
 
-        gains.x_vel_damp = vel_damp_from_snapback(controller_config.x_snapback);
-        gains.y_vel_damp = vel_damp_from_snapback(controller_config.y_snapback);
+        gains.x_vel_damp = vel_damp_from_snapback(controller_config.astick_config.x_snapback);
+        gains.y_vel_damp = vel_damp_from_snapback(controller_config.astick_config.y_snapback);
 
-        gains.x_smoothing = controller_config.x_smoothing as f32 / 10.;
-        gains.y_smoothing = controller_config.y_smoothing as f32 / 10.;
+        gains.x_smoothing = controller_config.astick_config.x_smoothing as f32 / 10.;
+        gains.y_smoothing = controller_config.astick_config.y_smoothing as f32 / 10.;
 
-        gains.c_xsmoothing = controller_config.c_xsmoothing as f32 / 10.;
-        gains.c_ysmoothing = controller_config.c_ysmoothing as f32 / 10.;
+        gains.c_xsmoothing = controller_config.cstick_config.x_smoothing as f32 / 10.;
+        gains.c_ysmoothing = controller_config.cstick_config.y_smoothing as f32 / 10.;
 
         // The below is assuming the sticks to be polled at 1000Hz
         let time_factor = 1.0 / 1.2;
@@ -111,12 +111,12 @@ impl FilterGains {
             x_vel_pos_factor: gains.x_vel_pos_factor * time_factor,
             y_vel_pos_factor: gains.y_vel_pos_factor * time_factor,
             x_vel_damp: gains.x_vel_damp
-                * match controller_config.x_snapback {
+                * match controller_config.astick_config.x_snapback {
                     a if a >= 0 => time_factor,
                     _ => 1.0,
                 },
             y_vel_damp: gains.y_vel_damp
-                * match controller_config.y_snapback {
+                * match controller_config.astick_config.y_snapback {
                     a if a >= 0 => time_factor,
                     _ => 1.0,
                 },

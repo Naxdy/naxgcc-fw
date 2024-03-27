@@ -1,5 +1,3 @@
-use core::task::Poll;
-
 use defmt::info;
 use embassy_futures::{join::join, yield_now};
 use embassy_rp::{
@@ -210,8 +208,8 @@ async fn update_stick_states<
     let (shaped_x, shaped_y) = run_waveshaping(
         x_pos_filt,
         y_pos_filt,
-        controller_config.ax_waveshaping,
-        controller_config.ay_waveshaping,
+        controller_config.astick_config.x_waveshaping,
+        controller_config.astick_config.y_waveshaping,
         controlstick_waveshaping_values,
         &filter_gains,
     );
@@ -226,8 +224,8 @@ async fn update_stick_states<
     let (shaped_cx, shaped_cy) = run_waveshaping(
         pos_cx,
         pos_cy,
-        controller_config.cx_waveshaping,
-        controller_config.cy_waveshaping,
+        controller_config.cstick_config.x_waveshaping,
+        controller_config.cstick_config.y_waveshaping,
         cstick_waveshaping_values,
         &filter_gains,
     );
@@ -387,8 +385,8 @@ pub async fn input_loop(
 
     let controller_config = ControllerConfig::from_flash_memory(&mut flash).unwrap();
 
-    let (controlstick_params, cstick_params) =
-        StickParams::from_controller_config(&controller_config);
+    let controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
+    let cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
 
     let filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
 
