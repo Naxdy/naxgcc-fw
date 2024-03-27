@@ -897,6 +897,7 @@ dependencies = [
  "portable-atomic",
  "rand",
  "static_cell",
+ "tiny_sort",
 ]
 
 [[package]]
@@ -1426,6 +1427,12 @@ checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
 dependencies = [
  "crunchy",
 ]
+
+[[package]]
+name = "tiny_sort"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3bbd7912d5028a8f218a772a794fee0104b46ea1f6e747ff0a4fdbb5dc024a6"
 
 [[package]]
 name = "typenum"

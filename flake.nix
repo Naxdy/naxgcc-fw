@@ -78,7 +78,7 @@
           "--target=${CARGO_BUILD_TARGET}"
         ];
 
-        # inherit RUSTFLAGS;
+        DEFMT_LOG = "warn";
       };
 
       devShells.default = pkgs.mkShell {

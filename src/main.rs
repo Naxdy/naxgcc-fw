@@ -7,11 +7,10 @@
 mod filter;
 mod gcc_hid;
 mod input;
+mod packed_float;
 mod stick;
 
-use core::ops::Deref;
-
-use defmt::{debug, info, Format};
+use defmt::{debug, info};
 use embassy_executor::Executor;
 use embassy_rp::{
     bind_interrupts,
@@ -26,7 +25,7 @@ use embassy_rp::{
 use gcc_hid::usb_transfer_loop;
 use gpio::{Level, Output};
 use input::input_loop;
-use packed_struct::PackedStruct;
+
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -36,31 +35,6 @@ static EXECUTOR1: StaticCell<Executor> = StaticCell::new();
 
 const FLASH_SIZE: usize = 2 * 1024 * 1024;
 const ADDR_OFFSET: u32 = 0x100000;
-
-/// wrapper type because packed_struct doesn't implement float
-/// packing by default for some reason
-#[derive(Debug, Format, Clone, Default)]
-pub struct PackedFloat(f32);
-
-impl PackedStruct for PackedFloat {
-    type ByteArray = [u8; 4];
-
-    fn pack(&self) -> packed_struct::PackingResult<Self::ByteArray> {
-        Ok(self.to_be_bytes())
-    }
-
-    fn unpack(src: &Self::ByteArray) -> packed_struct::PackingResult<Self> {
-        Ok(Self(f32::from_be_bytes(*src)))
-    }
-}
-
-impl Deref for PackedFloat {
-    type Target = f32;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
