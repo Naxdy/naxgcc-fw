@@ -16,7 +16,7 @@ use embassy_executor::Executor;
 use embassy_rp::{
     bind_interrupts,
     flash::{Async, Flash},
-    gpio::{self, Input},
+    gpio::{self, AnyPin, Input},
     multicore::{spawn_core1, Stack},
     peripherals::USB,
     pwm::Pwm,
@@ -76,8 +76,8 @@ fn main() -> ! {
 
     let spi = Spi::new_blocking(p.SPI0, spi_clk, mosi, miso, spi_cfg);
 
-    let spi_acs = Output::new(p_acs, Level::High); // active low
-    let spi_ccs = Output::new(p_ccs, Level::High); // active low
+    let spi_acs = Output::new(AnyPin::from(p_acs), Level::High); // active low
+    let spi_ccs = Output::new(AnyPin::from(p_ccs), Level::High); // active low
 
     let mut pwm_config: embassy_rp::pwm::Config = Default::default();
     pwm_config.top = 255;
@@ -94,18 +94,18 @@ fn main() -> ! {
         spawner
             .spawn(input_loop(
                 flash,
-                Input::new(p.PIN_20, gpio::Pull::Up),
-                Input::new(p.PIN_17, gpio::Pull::Up),
-                Input::new(p.PIN_16, gpio::Pull::Up),
-                Input::new(p.PIN_11, gpio::Pull::Up),
-                Input::new(p.PIN_9, gpio::Pull::Up),
-                Input::new(p.PIN_10, gpio::Pull::Up),
-                Input::new(p.PIN_8, gpio::Pull::Up),
-                Input::new(p.PIN_22, gpio::Pull::Up),
-                Input::new(p.PIN_21, gpio::Pull::Up),
-                Input::new(p.PIN_18, gpio::Pull::Up),
-                Input::new(p.PIN_19, gpio::Pull::Up),
-                Input::new(p.PIN_5, gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_20), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_17), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_16), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_11), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_9), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_10), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_8), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_22), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_21), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_18), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_19), gpio::Pull::Up),
+                Input::new(AnyPin::from(p.PIN_5), gpio::Pull::Up),
                 // pwm_rumble,
                 // pwm_brake,
                 spi,

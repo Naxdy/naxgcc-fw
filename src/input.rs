@@ -2,7 +2,7 @@ use defmt::{debug, info, trace, Format};
 use embassy_futures::{join::join, yield_now};
 use embassy_rp::{
     flash::{Async, Flash},
-    gpio::{Input, Output, Pin},
+    gpio::{AnyPin, Input, Output, Pin},
     peripherals::{
         FLASH, PIN_10, PIN_11, PIN_16, PIN_17, PIN_18, PIN_19, PIN_20, PIN_21, PIN_22, PIN_23,
         PIN_24, PIN_5, PIN_8, PIN_9, PWM_CH4, PWM_CH6, SPI0,
@@ -385,23 +385,23 @@ fn update_button_states<
 #[embassy_executor::task]
 pub async fn input_loop(
     mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>,
-    btn_z: Input<'static, PIN_20>,
-    btn_a: Input<'static, PIN_17>,
-    btn_b: Input<'static, PIN_16>,
-    btn_dright: Input<'static, PIN_11>,
-    btn_dup: Input<'static, PIN_9>,
-    btn_ddown: Input<'static, PIN_10>,
-    btn_dleft: Input<'static, PIN_8>,
-    btn_l: Input<'static, PIN_22>,
-    btn_r: Input<'static, PIN_21>,
-    btn_x: Input<'static, PIN_18>,
-    btn_y: Input<'static, PIN_19>,
-    btn_start: Input<'static, PIN_5>,
+    btn_z: Input<'static, AnyPin>,
+    btn_a: Input<'static, AnyPin>,
+    btn_b: Input<'static, AnyPin>,
+    btn_dright: Input<'static, AnyPin>,
+    btn_dup: Input<'static, AnyPin>,
+    btn_ddown: Input<'static, AnyPin>,
+    btn_dleft: Input<'static, AnyPin>,
+    btn_l: Input<'static, AnyPin>,
+    btn_r: Input<'static, AnyPin>,
+    btn_x: Input<'static, AnyPin>,
+    btn_y: Input<'static, AnyPin>,
+    btn_start: Input<'static, AnyPin>,
     // pwm_rumble: Pwm<'static, PWM_CH4>,
     // pwm_brake: Pwm<'static, PWM_CH6>,
     mut spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
-    mut spi_acs: Output<'static, PIN_24>,
-    mut spi_ccs: Output<'static, PIN_23>,
+    mut spi_acs: Output<'static, AnyPin>,
+    mut spi_ccs: Output<'static, AnyPin>,
 ) {
     if btn_a.is_low() && btn_x.is_low() && btn_y.is_low() {
         info!("Detected reset button press, booting into flash.");
