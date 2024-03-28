@@ -4,6 +4,7 @@
 
 #![no_std]
 #![no_main]
+mod calibrate;
 mod config;
 mod filter;
 mod gcc_hid;
@@ -11,23 +12,27 @@ mod helpers;
 mod input;
 mod stick;
 
+use calibrate::calibration_loop;
+use config::ControllerConfig;
 use defmt::{debug, info};
 use embassy_executor::Executor;
+use embassy_futures::join::join;
 use embassy_rp::{
     bind_interrupts,
     flash::{Async, Flash},
     gpio::{self, AnyPin, Input},
     multicore::{spawn_core1, Stack},
-    peripherals::USB,
+    peripherals::{SPI0, USB},
     pwm::Pwm,
     spi::{self, Spi},
     usb::{Driver, InterruptHandler},
 };
-use gcc_hid::usb_transfer_loop;
+use gcc_hid::usb_transfer_task;
 use gpio::{Level, Output};
-use input::input_loop;
 
+use input::{update_button_state_task, update_stick_states_task};
 use static_cell::StaticCell;
+
 use {defmt_rtt as _, panic_probe as _};
 
 static mut CORE1_STACK: Stack<4096> = Stack::new();
@@ -49,20 +54,16 @@ fn main() -> ! {
 
     let driver = Driver::new(p.USB, Irqs);
 
+    // reading and writing from flash has to be done on the main thread, else funny things happen.
+
     let mut flash = Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH0);
 
     let mut uid = [0u8; 8];
     flash.blocking_unique_id(&mut uid).unwrap();
 
+    let controller_config = ControllerConfig::from_flash_memory(&mut flash).unwrap();
+
     debug!("Read unique id: {:02X}", uid);
-
-    spawn_core1(p.CORE1, unsafe { &mut CORE1_STACK }, move || {
-        let executor1 = EXECUTOR1.init(Executor::new());
-        executor1.run(|spawner| spawner.spawn(usb_transfer_loop(driver, uid)).unwrap());
-    });
-
-    let executor0 = EXECUTOR0.init(Executor::new());
-    info!("Initialized.");
 
     let mosi = p.PIN_7;
     let miso = p.PIN_4;
@@ -79,6 +80,33 @@ fn main() -> ! {
     let spi_acs = Output::new(AnyPin::from(p_acs), Level::High); // active low
     let spi_ccs = Output::new(AnyPin::from(p_ccs), Level::High); // active low
 
+    spawn_core1(p.CORE1, unsafe { &mut CORE1_STACK }, move || {
+        let executor1 = EXECUTOR1.init(Executor::new());
+        debug!("Mana");
+        executor1.run(|spawner| {
+            spawner.spawn(usb_transfer_task(driver, uid)).unwrap();
+            spawner
+                .spawn(update_button_state_task(
+                    Input::new(AnyPin::from(p.PIN_20), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_17), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_16), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_11), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_9), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_10), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_8), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_22), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_21), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_18), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_19), gpio::Pull::Up),
+                    Input::new(AnyPin::from(p.PIN_5), gpio::Pull::Up),
+                ))
+                .unwrap()
+        });
+    });
+
+    let executor0 = EXECUTOR0.init(Executor::new());
+    info!("Initialized.");
+
     let mut pwm_config: embassy_rp::pwm::Config = Default::default();
     pwm_config.top = 255;
     pwm_config.enable = true;
@@ -92,25 +120,11 @@ fn main() -> ! {
 
     executor0.run(|spawner| {
         spawner
-            .spawn(input_loop(
-                flash,
-                Input::new(AnyPin::from(p.PIN_20), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_17), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_16), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_11), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_9), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_10), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_8), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_22), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_21), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_18), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_19), gpio::Pull::Up),
-                Input::new(AnyPin::from(p.PIN_5), gpio::Pull::Up),
-                // pwm_rumble,
-                // pwm_brake,
+            .spawn(update_stick_states_task(
                 spi,
                 spi_acs,
                 spi_ccs,
+                controller_config,
             ))
             .unwrap()
     });

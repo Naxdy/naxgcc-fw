@@ -16,7 +16,7 @@ use embassy_usb::{
 };
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
-use crate::input::GCC_SIGNAL;
+use crate::input::CHANNEL_GCC_STATE;
 
 #[rustfmt::skip]
 pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
@@ -234,7 +234,7 @@ impl Handler for MyDeviceHandler {
 }
 
 #[embassy_executor::task]
-pub async fn usb_transfer_loop(driver: Driver<'static, USB>, raw_serial: [u8; 8]) {
+pub async fn usb_transfer_task(driver: Driver<'static, USB>, raw_serial: [u8; 8]) {
     let mut serial_buffer = [0u8; 64];
 
     let serial = format_no_std::show(
@@ -312,13 +312,14 @@ pub async fn usb_transfer_loop(driver: Driver<'static, USB>, raw_serial: [u8; 8]
     };
 
     let (mut reader, mut writer) = hid.split();
-    debug!("In here");
 
     let mut lasttime = Instant::now();
 
     let in_fut = async {
+        let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
+
         loop {
-            let state = GCC_SIGNAL.wait().await;
+            let state = gcc_subscriber.next_message_pure().await;
             let report = get_gcinput_hid_report(&state);
             match writer.write(&report).await {
                 Ok(()) => {

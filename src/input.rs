@@ -10,7 +10,9 @@ use embassy_rp::{
     pwm::Pwm,
     spi::Spi,
 };
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, pubsub::PubSubChannel, signal::Signal,
+};
 use embassy_time::{Duration, Instant, Timer};
 use libm::{fmaxf, fminf};
 
@@ -23,9 +25,13 @@ use crate::{
     FLASH_SIZE,
 };
 
-pub static GCC_SIGNAL: Signal<CriticalSectionRawMutex, GcReport> = Signal::new();
+/// Used to send the button state to the usb task and the calibration task
+pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcReport, 1, 2, 1> =
+    PubSubChannel::new();
 
+/// Used to send the stick state from the stick task to the main input task
 static STICK_SIGNAL: Signal<CriticalSectionRawMutex, StickState> = Signal::new();
+
 const STICK_HYST_VAL: f32 = 0.3;
 const FLOAT_ORIGIN: f32 = 127.5;
 
@@ -67,6 +73,7 @@ pub enum StickAxis {
     YAxis,
 }
 
+#[link_section = ".time_critical.read_ext_adc"]
 fn read_ext_adc<'a, Acs: Pin, Ccs: Pin, I: embassy_rp::spi::Instance, M: embassy_rp::spi::Mode>(
     which_stick: Stick,
     which_axis: StickAxis,
@@ -101,6 +108,8 @@ fn read_ext_adc<'a, Acs: Pin, Ccs: Pin, I: embassy_rp::spi::Instance, M: embassy
 }
 
 /// Gets the average stick state over a 1ms interval in a non-blocking fashion.
+/// Will wait until end_time is reached before continuing after reading the ADCs.
+#[link_section = ".time_critical.update_stick_states"]
 async fn update_stick_states<
     'a,
     Acs: Pin,
@@ -128,9 +137,7 @@ async fn update_stick_states<
     let mut cx_sum = 0u32;
     let mut cy_sum = 0u32;
 
-    // TODO: lower interval possible?
-
-    let end_time = Instant::now() + embassy_time::Duration::from_micros(500);
+    let end_time = Instant::now() + Duration::from_micros(300); // this seems kinda magic, and it is, but
     let mut loop_time = Duration::from_millis(0);
 
     while Instant::now() < end_time - loop_time {
@@ -166,12 +173,10 @@ async fn update_stick_states<
             &mut spi_ccs,
         ) as u32;
 
-        // with this, we can poll the sticks at 1000Hz (ish), while updating
-        // the rest of the controller (the buttons) much faster, to ensure
-        // better input integrity for button inputs.
-        yield_now().await;
         loop_time = Instant::now() - loop_start;
     }
+
+    trace!("ADC Count: {}", adc_count);
 
     let raw_controlstick = XyValuePair {
         x: (ax_sum as f32) / (adc_count as f32) / 4096.0f32,
@@ -382,9 +387,10 @@ fn update_button_states<
     gcc_state.buttons_1.dpad_down = btn_ddown.is_low();
 }
 
+/// Task responsible for updating the button states.
+/// Publishes the result to CHANNEL_GCC_STATE.
 #[embassy_executor::task]
-pub async fn input_loop(
-    mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>,
+pub async fn update_button_state_task(
     btn_z: Input<'static, AnyPin>,
     btn_a: Input<'static, AnyPin>,
     btn_b: Input<'static, AnyPin>,
@@ -397,12 +403,8 @@ pub async fn input_loop(
     btn_x: Input<'static, AnyPin>,
     btn_y: Input<'static, AnyPin>,
     btn_start: Input<'static, AnyPin>,
-    // pwm_rumble: Pwm<'static, PWM_CH4>,
-    // pwm_brake: Pwm<'static, PWM_CH6>,
-    mut spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
-    mut spi_acs: Output<'static, AnyPin>,
-    mut spi_ccs: Output<'static, AnyPin>,
 ) {
+    // upon loop entry, we check for the reset combo once
     if btn_a.is_low() && btn_x.is_low() && btn_y.is_low() {
         info!("Detected reset button press, booting into flash.");
         embassy_rp::rom_data::reset_to_usb_boot(0, 0);
@@ -417,99 +419,109 @@ pub async fn input_loop(
     gcc_state.cstick_x = 127;
     gcc_state.cstick_y = 127;
 
-    let controller_config = ControllerConfig::from_flash_memory(&mut flash).unwrap();
+    let gcc_publisher = CHANNEL_GCC_STATE.publisher().unwrap();
 
+    loop {
+        update_button_states(
+            &mut gcc_state,
+            &btn_a,
+            &btn_b,
+            &btn_x,
+            &btn_y,
+            &btn_start,
+            &btn_l,
+            &btn_r,
+            &btn_z,
+            &btn_dleft,
+            &btn_dright,
+            &btn_dup,
+            &btn_ddown,
+        );
+
+        // give other tasks a chance to do something
+        yield_now().await;
+
+        // not every loop pass is going to update the stick state
+        match STICK_SIGNAL.try_take() {
+            Some(stick_state) => {
+                gcc_state.stick_x = stick_state.ax;
+                gcc_state.stick_y = stick_state.ay;
+                gcc_state.cstick_x = stick_state.cx;
+                gcc_state.cstick_y = stick_state.cy;
+            }
+            None => (),
+        }
+
+        gcc_publisher.publish_immediate(gcc_state);
+    }
+}
+
+/// Task responsible for updating the stick states.
+/// Publishes the result to STICK_SIGNAL.
+#[embassy_executor::task]
+pub async fn update_stick_states_task(
+    mut spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
+    mut spi_acs: Output<'static, AnyPin>,
+    mut spi_ccs: Output<'static, AnyPin>,
+    controller_config: ControllerConfig,
+) {
     let controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
     let cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
 
     let filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
 
-    let stick_state_fut = async {
-        let mut current_stick_state = StickState {
-            ax: 127,
-            ay: 127,
-            cx: 127,
-            cy: 127,
-        };
-        let mut raw_stick_values = RawStickValues::default();
-        let mut old_stick_pos = StickPositions::default();
-        let mut cstick_waveshaping_values = WaveshapingValues::default();
-        let mut controlstick_waveshaping_values = WaveshapingValues::default();
-        let mut kalman_state = KalmanState::default();
-
-        let mut last_loop_time = Instant::now();
-
-        loop {
-            let timer = Timer::after_micros(1000);
-
-            current_stick_state = update_stick_states(
-                &mut spi,
-                &mut spi_acs,
-                &mut spi_ccs,
-                &current_stick_state,
-                &controlstick_params,
-                &cstick_params,
-                &controller_config,
-                &filter_gains,
-                &mut controlstick_waveshaping_values,
-                &mut cstick_waveshaping_values,
-                &mut old_stick_pos,
-                &mut raw_stick_values,
-                &mut kalman_state,
-            )
-            .await;
-
-            timer.await;
-
-            match (Instant::now() - last_loop_time).as_micros() {
-                a if a > 1100 => {
-                    debug!("Loop took {} us", a);
-                }
-                _ => {}
-            };
-
-            last_loop_time = Instant::now();
-
-            STICK_SIGNAL.signal(current_stick_state.clone());
-        }
+    let mut current_stick_state = StickState {
+        ax: 127,
+        ay: 127,
+        cx: 127,
+        cy: 127,
     };
+    let mut raw_stick_values = RawStickValues::default();
+    let mut old_stick_pos = StickPositions::default();
+    let mut cstick_waveshaping_values = WaveshapingValues::default();
+    let mut controlstick_waveshaping_values = WaveshapingValues::default();
+    let mut kalman_state = KalmanState::default();
 
-    let input_fut = async {
-        loop {
-            let timer = Timer::after_micros(500);
+    let mut last_loop_time = Instant::now();
 
-            update_button_states(
-                &mut gcc_state,
-                &btn_a,
-                &btn_b,
-                &btn_x,
-                &btn_y,
-                &btn_start,
-                &btn_l,
-                &btn_r,
-                &btn_z,
-                &btn_dleft,
-                &btn_dright,
-                &btn_dup,
-                &btn_ddown,
-            );
+    debug!("Entering stick update loop.");
 
-            timer.await;
+    // the time at which the current loop iteration should end
+    let mut end_time = Instant::now() + Duration::from_micros(1000);
 
-            // not every loop pass is going to update the stick state
-            match STICK_SIGNAL.try_take() {
-                Some(stick_state) => {
-                    gcc_state.stick_x = stick_state.ax;
-                    gcc_state.stick_y = stick_state.ay;
-                    gcc_state.cstick_x = stick_state.cx;
-                    gcc_state.cstick_y = stick_state.cy;
-                }
-                None => (),
+    loop {
+        let timer = Timer::at(end_time);
+
+        current_stick_state = update_stick_states(
+            &mut spi,
+            &mut spi_acs,
+            &mut spi_ccs,
+            &current_stick_state,
+            &controlstick_params,
+            &cstick_params,
+            &controller_config,
+            &filter_gains,
+            &mut controlstick_waveshaping_values,
+            &mut cstick_waveshaping_values,
+            &mut old_stick_pos,
+            &mut raw_stick_values,
+            &mut kalman_state,
+        )
+        .await;
+
+        timer.await;
+        end_time += Duration::from_micros(1000);
+
+        match Instant::now() {
+            n => {
+                match (n - last_loop_time).as_micros() {
+                    a if a > 1100 => debug!("Loop took {} us", a),
+                    _ => {}
+                };
+                last_loop_time = n;
             }
+        };
 
-            GCC_SIGNAL.signal(gcc_state);
-        }
-    };
-
-    join(input_fut, stick_state_fut).await;
+        STICK_SIGNAL.signal(current_stick_state.clone());
+    }
 }
