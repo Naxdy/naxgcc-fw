@@ -4,7 +4,7 @@
  */
 use core::{cmp::min, f32::consts::PI};
 
-use defmt::{error, info, warn, Format};
+use defmt::{debug, error, info, warn, Format};
 use embassy_rp::{
     flash::{Async, Flash, ERASE_SIZE},
     peripherals::FLASH,
@@ -13,17 +13,20 @@ use packed_struct::{derive::PackedStruct, PackedStruct};
 
 use crate::{
     helpers::{PackedFloat, ToPackedFloatArray, XyValuePair},
-    input::{read_ext_adc, Stick, StickAxis, SPI_ACS_SHARED, SPI_CCS_SHARED, SPI_SHARED},
+    input::{
+        read_ext_adc, Stick, StickAxis, StickState, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED,
+        SPI_SHARED,
+    },
     stick::{
-        legalize_notches, AppliedCalibration, NotchStatus, NOTCH_ADJUSTMENT_ORDER,
-        NO_OF_ADJ_NOTCHES, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES,
+        calc_stick_values, legalize_notches, AppliedCalibration, NotchStatus, CALIBRATION_ORDER,
+        NOTCH_ADJUSTMENT_ORDER, NO_OF_ADJ_NOTCHES, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES,
     },
     ADDR_OFFSET, FLASH_SIZE,
 };
 
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
-    pubsub::Subscriber,
+    pubsub::{PubSubBehavior, Subscriber},
     signal::Signal,
 };
 use embassy_time::Timer;
@@ -33,6 +36,12 @@ use crate::{gcc_hid::GcReport, input::CHANNEL_GCC_STATE};
 /// Whether we are currently calibrating the sticks. Updates are dispatched when the status changes.
 /// Initial status is assumed to be false.
 pub static SIGNAL_IS_CALIBRATING: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
+/// Signal used to override the stick state in order to display desired stick positions during calibration.
+pub static SIGNAL_OVERRIDE_STICK_STATE: Signal<
+    CriticalSectionRawMutex,
+    Option<OverrideStickState>,
+> = Signal::new();
 
 /// Dispatched when we want to override the GCC state for a short amount of time.
 pub static SIGNAL_OVERRIDE_GCC_STATE: Signal<CriticalSectionRawMutex, OverrideGcReportInstruction> =
@@ -54,19 +63,9 @@ const CONFIG_MODE_ENTRY_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::Y,
 ];
 
-const LSTICK_CALIBRATION_COMBO: [AwaitableButtons; 4] = [
-    AwaitableButtons::A,
-    AwaitableButtons::X,
-    AwaitableButtons::Y,
-    AwaitableButtons::L,
-];
+const LSTICK_CALIBRATION_COMBO: [AwaitableButtons; 2] = [AwaitableButtons::A, AwaitableButtons::X];
 
-const RSTICK_CALIBRATION_COMBO: [AwaitableButtons; 4] = [
-    AwaitableButtons::A,
-    AwaitableButtons::X,
-    AwaitableButtons::Y,
-    AwaitableButtons::R,
-];
+const RSTICK_CALIBRATION_COMBO: [AwaitableButtons; 2] = [AwaitableButtons::A, AwaitableButtons::Y];
 
 /// This doesn't need to be super fast, since it's only used
 /// in config mode.
@@ -74,7 +73,7 @@ const BUTTON_POLL_INTERVAL_MILLIS: u64 = 20;
 
 /// This needs to be incremented for ANY change to ControllerConfig
 /// else we risk loading uninitialized memory.
-pub const CONTROLLER_CONFIG_REVISION: u8 = 2;
+pub const CONTROLLER_CONFIG_REVISION: u8 = 1;
 
 pub const DEFAULT_NOTCH_STATUS: [NotchStatus; NO_OF_NOTCHES] = [
     NotchStatus::Cardinal,
@@ -154,6 +153,13 @@ pub const DEFAULT_ANGLES: [f32; NO_OF_NOTCHES] = [
     PI * 15. / 8.,
 ];
 
+#[derive(Clone, Format)]
+pub struct OverrideStickState {
+    pub x: u8,
+    pub y: u8,
+    pub which_stick: Stick,
+}
+
 #[derive(Clone, Copy, Debug, Format)]
 enum AwaitableButtons {
     A,
@@ -201,11 +207,11 @@ impl Default for StickConfig {
         Self {
             x_waveshaping: 0,
             y_waveshaping: 0,
-            x_snapback: 0,
-            y_snapback: 0,
+            x_snapback: 4,
+            y_snapback: 4,
             x_smoothing: 0,
             y_smoothing: 0,
-            cardinal_snapping: 0,
+            cardinal_snapping: 6,
             analog_scaler: 100,
             cal_points_x: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
             cal_points_y: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
@@ -275,6 +281,9 @@ trait WaitForButtonPress {
     /// Wait for a single button press.
     async fn wait_for_button_press(&mut self, button_to_wait_for: &AwaitableButtons);
 
+    /// Wait for a single button release.
+    async fn wait_for_button_release(&mut self, button_to_wait_for: &AwaitableButtons);
+
     /// Wait for multiple buttons to be pressed simultaneously.
     async fn wait_for_simultaneous_button_presses<const N: usize>(
         &mut self,
@@ -302,6 +311,18 @@ impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> WaitForBut
             let report = self.next_message_pure().await;
 
             if is_awaitable_button_pressed(&report, button_to_wait_for) {
+                break;
+            }
+
+            Timer::after_millis(BUTTON_POLL_INTERVAL_MILLIS).await;
+        }
+    }
+
+    async fn wait_for_button_release(&mut self, button_to_wait_for: &AwaitableButtons) {
+        loop {
+            let report = self.next_message_pure().await;
+
+            if !is_awaitable_button_pressed(&report, button_to_wait_for) {
                 break;
             }
 
@@ -401,7 +422,12 @@ impl<'a> StickCalibrationProcess<'a> {
         }
     }
 
-    async fn calibration_advance(&mut self) {
+    async fn calibration_advance(&mut self) -> bool {
+        info!(
+            "Running calibration advance on stick {} at step {}",
+            self.which_stick, self.calibration_step
+        );
+
         let stick_config = match self.which_stick {
             Stick::ControlStick => &mut self.gcc_config.astick_config,
             Stick::CStick => &mut self.gcc_config.cstick_config,
@@ -428,7 +454,9 @@ impl<'a> StickCalibrationProcess<'a> {
             x /= 128.;
             y /= 128.;
 
-            self.cal_points[self.calibration_step as usize] = XyValuePair { x, y };
+            let idx = CALIBRATION_ORDER[self.calibration_step as usize];
+
+            self.cal_points[idx] = XyValuePair { x, y };
         }
 
         self.calibration_step += 1;
@@ -451,41 +479,97 @@ impl<'a> StickCalibrationProcess<'a> {
             );
         }
 
-        let mut notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
-            self.calibration_step - NO_OF_CALIBRATION_POINTS as u8,
-            NO_OF_ADJ_NOTCHES as u8 - 1,
-        ) as usize];
-
-        while self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8
-            && self.applied_calibration.cleaned_calibration.notch_status[notch_idx]
-                == NotchStatus::TertInactive
-            && self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8
-        {
-            stick_config.angles = *legalize_notches(
-                self.calibration_step as usize,
-                &self.applied_calibration.measured_notch_angles,
-                &stick_config.angles.map(|e| *e),
-            )
-            .to_packed_float_array();
-
-            self.calibration_step += 1;
-
-            notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
+        if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 {
+            let mut notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
                 self.calibration_step - NO_OF_CALIBRATION_POINTS as u8,
                 NO_OF_ADJ_NOTCHES as u8 - 1,
             ) as usize];
+
+            while self.applied_calibration.cleaned_calibration.notch_status[notch_idx]
+                == NotchStatus::TertInactive
+                && self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8
+            {
+                stick_config.angles = *legalize_notches(
+                    self.calibration_step as usize,
+                    &self.applied_calibration.measured_notch_angles,
+                    &stick_config.angles.map(|e| *e),
+                )
+                .to_packed_float_array();
+
+                self.calibration_step += 1;
+
+                notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
+                    self.calibration_step - NO_OF_CALIBRATION_POINTS as u8,
+                    NO_OF_ADJ_NOTCHES as u8 - 1,
+                ) as usize];
+            }
         }
 
         if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8 {
             stick_config.cal_points_x = self.cal_points.map(|p| p.x.into());
             stick_config.cal_points_y = self.cal_points.map(|p| p.y.into());
+
+            info!("Finished calibrating stick {}", self.which_stick);
+
+            return true;
         }
 
-        info!("Finished calibrating stick {}", self.which_stick);
+        return false;
     }
 
     pub async fn calibrate_stick(&mut self) {
-        todo!()
+        info!("Beginning stick calibration for {}", self.which_stick);
+
+        let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
+        SIGNAL_IS_CALIBRATING.signal(true);
+
+        while {
+            if self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 {
+                let (x, y) = get_stick_display_coords(self.calibration_step as usize);
+                debug!(
+                    "Raw display coords for step {}: {}, {}",
+                    self.calibration_step, x, y
+                );
+                SIGNAL_OVERRIDE_STICK_STATE.signal(Some(OverrideStickState {
+                    x: x as u8,
+                    y: y as u8,
+                    which_stick: match self.which_stick {
+                        Stick::ControlStick => Stick::CStick,
+                        Stick::CStick => Stick::ControlStick,
+                    },
+                }));
+            } else {
+                // TODO: phob calls `adjustNotch` here
+            }
+
+            gcc_subscriber
+                .wait_for_button_release(&AwaitableButtons::A)
+                .await;
+
+            // Prevent accidental double presses
+            Timer::after_millis(20).await;
+
+            gcc_subscriber
+                .wait_for_button_press(&AwaitableButtons::A)
+                .await;
+
+            !self.calibration_advance().await
+        } {}
+
+        SIGNAL_IS_CALIBRATING.signal(false);
+        SIGNAL_OVERRIDE_STICK_STATE.signal(None);
+    }
+}
+
+fn get_stick_display_coords(current_step: usize) -> (f32, f32) {
+    let idx = CALIBRATION_ORDER[current_step];
+    if idx % 2 != 0 {
+        let notch_idx = idx / 2;
+        match calc_stick_values(DEFAULT_ANGLES[notch_idx]) {
+            (x, y) => (x + FLOAT_ORIGIN, y + FLOAT_ORIGIN),
+        }
+    } else {
+        (127.5, 127.5)
     }
 }
 
@@ -509,25 +593,29 @@ async fn configuration_main_loop<
             .await
         {
             selection => match selection {
-                1 => {
+                0 => {
                     StickCalibrationProcess::new(&mut final_config, Stick::ControlStick)
                         .calibrate_stick()
-                        .await
+                        .await;
                 }
-                2 => {
+                1 => {
                     StickCalibrationProcess::new(&mut final_config, Stick::CStick)
                         .calibrate_stick()
-                        .await
+                        .await;
                 }
-                _ => {
-                    error!("Invalid selection: {}", selection);
-                    break 'main;
+                s => {
+                    error!("Invalid selection in config loop: {}", s);
+                    continue;
                 }
             },
         };
 
         final_config.write_to_flash(&mut flash).unwrap();
+
+        break 'main;
     }
+
+    info!("Exiting config main loop.");
 }
 
 #[embassy_executor::task]
@@ -563,6 +651,9 @@ pub async fn config_task(
             },
             duration_ms: 1000,
         });
+
+        // Wait for the user to release the buttons
+        Timer::after_millis(500).await;
 
         configuration_main_loop(&current_config, &mut flash, &mut gcc_subscriber).await;
 

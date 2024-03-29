@@ -20,7 +20,10 @@ use embassy_time::{Duration, Instant, Timer};
 use libm::{fmaxf, fminf};
 
 use crate::{
-    config::{ControllerConfig, SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE},
+    config::{
+        ControllerConfig, OverrideStickState, SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE,
+        SIGNAL_OVERRIDE_STICK_STATE,
+    },
     filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
     gcc_hid::GcReport,
     helpers::XyValuePair,
@@ -29,7 +32,7 @@ use crate::{
 };
 
 /// Used to send the button state to the usb task and the calibration task
-pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcReport, 1, 2, 1> =
+pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcReport, 1, 3, 1> =
     PubSubChannel::new();
 
 /// Used to send the stick state from the stick task to the main input task
@@ -46,14 +49,14 @@ pub static SPI_CCS_SHARED: Mutex<ThreadModeRawMutex, Option<Output<'static, AnyP
     Mutex::new(None);
 
 const STICK_HYST_VAL: f32 = 0.3;
-const FLOAT_ORIGIN: f32 = 127.5;
+pub const FLOAT_ORIGIN: f32 = 127.5;
 
-#[derive(Clone, Debug, Default)]
-struct StickState {
-    ax: u8,
-    ay: u8,
-    cx: u8,
-    cy: u8,
+#[derive(Clone, Debug, Default, Format)]
+pub struct StickState {
+    pub ax: u8,
+    pub ay: u8,
+    pub cx: u8,
+    pub cy: u8,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -413,6 +416,8 @@ pub async fn update_button_state_task(
 
     let gcc_publisher = CHANNEL_GCC_STATE.publisher().unwrap();
 
+    let mut override_stick_state: Option<OverrideStickState> = None;
+
     loop {
         update_button_states(
             &mut gcc_state,
@@ -438,13 +443,33 @@ pub async fn update_button_state_task(
             gcc_state.cstick_y = stick_state.cy;
         }
 
+        if let Some(override_stick_state_opt) = SIGNAL_OVERRIDE_STICK_STATE.try_take() {
+            debug!("Overridden stick state: {:?}", override_stick_state_opt);
+            override_stick_state = override_stick_state_opt;
+        }
+
         // check for a gcc state override (usually coming from the config task)
         if let Some(override_gcc_state) = SIGNAL_OVERRIDE_GCC_STATE.try_take() {
             gcc_publisher.publish_immediate(override_gcc_state.report);
             Timer::after_millis(override_gcc_state.duration_ms).await;
         };
 
-        gcc_publisher.publish_immediate(gcc_state);
+        if let Some(override_state) = &override_stick_state {
+            let mut overriden_gcc_state = gcc_state.clone();
+            match override_state.which_stick {
+                Stick::ControlStick => {
+                    overriden_gcc_state.stick_x = override_state.x;
+                    overriden_gcc_state.stick_y = override_state.y;
+                }
+                Stick::CStick => {
+                    overriden_gcc_state.cstick_x = override_state.x;
+                    overriden_gcc_state.cstick_y = override_state.y;
+                }
+            }
+            gcc_publisher.publish_immediate(overriden_gcc_state);
+        } else {
+            gcc_publisher.publish_immediate(gcc_state);
+        }
 
         // give other tasks a chance to do something
         yield_now().await;
@@ -457,14 +482,17 @@ pub async fn update_button_state_task(
 /// Has to run on core0 because it makes use of SPI0.
 #[embassy_executor::task]
 pub async fn update_stick_states_task(
-    mut spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
-    mut spi_acs: Output<'static, AnyPin>,
-    mut spi_ccs: Output<'static, AnyPin>,
+    spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
+    spi_acs: Output<'static, AnyPin>,
+    spi_ccs: Output<'static, AnyPin>,
     controller_config: ControllerConfig,
 ) {
+    *SPI_SHARED.lock().await = Some(spi);
+    *SPI_ACS_SHARED.lock().await = Some(spi_acs);
+    *SPI_CCS_SHARED.lock().await = Some(spi_ccs);
+
     let controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
     let cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
-
     let filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
 
     let mut current_stick_state = StickState {

@@ -23,9 +23,9 @@ const MAX_ORDER: usize = 20;
 const MAX_STICK_ANGLE: f32 = 0.4886921906;
 
 #[rustfmt::skip]
-//                                                             right        notch 1      up right     notch 2      up           notch 3      up left      notch 4      left         notch 5      down left    notch 6      down         notch 7      down right   notch 8
-//                                                             0            1            2            3            4            5            6            7            8            9            10           11           12           13           14           15
-const CALIBRATION_ORDER: [usize; NO_OF_CALIBRATION_POINTS] = [ 0, 1,        8, 9,       16, 17,       24, 25,      4, 5,        12, 13,      20, 21,      28, 29,      2, 3,        6, 7,        10, 11,      14, 15,      18, 19,      22, 23,      26, 27,      30, 31 ];
+//                                                                right        notch 1      up right     notch 2      up           notch 3      up left      notch 4      left         notch 5      down left    notch 6      down         notch 7      down right   notch 8
+//                                                                0            1            2            3            4            5            6            7            8            9            10           11           12           13           14           15
+pub const CALIBRATION_ORDER: [usize; NO_OF_CALIBRATION_POINTS] = [ 0, 1,        8, 9,       16, 17,       24, 25,      4, 5,        12, 13,      20, 21,      28, 29,      2, 3,        6, 7,        10, 11,      14, 15,      18, 19,      22, 23,      26, 27,      30, 31 ];
 
 #[rustfmt::skip]
 //                                                              up right     up left      down left    down right   notch 1      notch 2      notch 3      notch 4      notch 5      notch 6      notch 7      notch 8
@@ -498,29 +498,29 @@ pub fn legalize_notches(
 
     for i in current_step..44 {
         let idx = NOTCH_ADJUSTMENT_ORDER[i - NO_OF_CALIBRATION_POINTS];
-        out[idx] = legalize_notch(idx, measured_notch_angles, &out);
+        out[idx] = legalize_notch(idx as isize, measured_notch_angles, &out);
     }
 
     out
 }
 
 fn legalize_notch(
-    idx: usize,
+    idx: isize,
     measured_notch_angles: &[f32; NO_OF_NOTCHES],
     notch_angles: &[f32; NO_OF_NOTCHES],
 ) -> f32 {
     let is_diagonal = (idx - 2) % 4 == 0;
 
     let prev_idx = if is_diagonal {
-        (idx - 2 + NO_OF_NOTCHES) % NO_OF_NOTCHES
+        (idx - 2 + NO_OF_NOTCHES as isize) % NO_OF_NOTCHES as isize
     } else {
-        (idx - 1 + NO_OF_NOTCHES) % NO_OF_NOTCHES
-    };
+        (idx - 1 + NO_OF_NOTCHES as isize) % NO_OF_NOTCHES as isize
+    } as usize;
     let next_idx = if is_diagonal {
-        (idx + 2) % NO_OF_NOTCHES
+        (idx + 2) % NO_OF_NOTCHES as isize
     } else {
-        (idx + 1) % NO_OF_NOTCHES
-    };
+        (idx + 1) % NO_OF_NOTCHES as isize
+    } as usize;
 
     let prev_angle = notch_angles[prev_idx];
     let next_angle = match notch_angles[next_idx] {
@@ -529,7 +529,7 @@ fn legalize_notch(
     };
 
     let prev_meas_angle = measured_notch_angles[prev_idx];
-    let this_meas_angle = measured_notch_angles[idx];
+    let this_meas_angle = measured_notch_angles[idx as usize];
     let next_meas_angle = match measured_notch_angles[next_idx] {
         a if a < prev_meas_angle => a + 2. * PI,
         a => a,
@@ -575,7 +575,7 @@ fn legalize_notch(
 
     fminf(
         upper_distort_limit,
-        fmaxf(notch_angles[idx], lower_distort_limit),
+        fmaxf(notch_angles[idx as usize], lower_distort_limit),
     )
 }
 
@@ -853,6 +853,7 @@ pub fn linearize(point: f32, coefficients: &[f32; NUM_COEFFS]) -> f32 {
         + coefficients[3]
 }
 
+// TODO: currently broken!
 #[link_section = ".time_critical.notch_remap"]
 pub fn notch_remap(
     x_in: f32,
