@@ -3,7 +3,7 @@
 use core::f32::consts::PI;
 
 use defmt::{debug, Format};
-use libm::{atan2f, cosf, fabs, fabsf, roundf, sinf, sqrtf};
+use libm::{atan2f, cosf, fabs, fabsf, fmaxf, fminf, roundf, sinf, sqrtf};
 
 use crate::{
     config::{ControllerConfig, StickConfig, DEFAULT_ANGLES, DEFAULT_NOTCH_STATUS},
@@ -28,8 +28,8 @@ const MAX_STICK_ANGLE: f32 = 0.4886921906;
 const CALIBRATION_ORDER: [usize; NO_OF_CALIBRATION_POINTS] = [ 0, 1,        8, 9,       16, 17,       24, 25,      4, 5,        12, 13,      20, 21,      28, 29,      2, 3,        6, 7,        10, 11,      14, 15,      18, 19,      22, 23,      26, 27,      30, 31 ];
 
 #[rustfmt::skip]
-//                                                          up right     up left      down left    down right   notch 1      notch 2      notch 3      notch 4      notch 5      notch 6      notch 7      notch 8
-const NOTCH_ADJUSTMENT_ORDER: [usize; NO_OF_ADJ_NOTCHES] = [2,           6,           10,          14,          1,           3,           5,           7,           9,           11,          13,          15];
+//                                                              up right     up left      down left    down right   notch 1      notch 2      notch 3      notch 4      notch 5      notch 6      notch 7      notch 8
+pub const NOTCH_ADJUSTMENT_ORDER: [usize; NO_OF_ADJ_NOTCHES] = [2,           6,           10,          14,          1,           3,           5,           7,           9,           11,          13,          15];
 
 #[derive(Clone, Debug, Default, Format)]
 pub struct StickParams {
@@ -76,8 +76,8 @@ pub enum NotchStatus {
     Cardinal,
 }
 
-#[derive(Clone, Debug)]
-struct CleanedCalibrationPoints {
+#[derive(Clone, Debug, Format)]
+pub struct CleanedCalibrationPoints {
     pub cleaned_points: XyValuePair<[f32; NO_OF_NOTCHES + 1]>,
     pub notch_points: XyValuePair<[f32; NO_OF_NOTCHES + 1]>,
     pub notch_status: [NotchStatus; NO_OF_NOTCHES],
@@ -387,11 +387,12 @@ impl NotchCalibration {
     }
 }
 
-struct AppliedCalibration {
-    stick_params: StickParams,
-    cleaned_calibration: CleanedCalibrationPoints,
-    notch_angles: [f32; NO_OF_NOTCHES],
-    measured_notch_angles: [f32; NO_OF_NOTCHES],
+#[derive(Debug, Clone, Format, Default)]
+pub struct AppliedCalibration {
+    pub stick_params: StickParams,
+    pub cleaned_calibration: CleanedCalibrationPoints,
+    pub notch_angles: [f32; NO_OF_NOTCHES],
+    pub measured_notch_angles: [f32; NO_OF_NOTCHES],
 }
 
 impl AppliedCalibration {
@@ -486,6 +487,96 @@ impl AppliedCalibration {
             cleaned_calibration: cleaned_full,
         }
     }
+}
+
+pub fn legalize_notches(
+    current_step: usize,
+    measured_notch_angles: &[f32; NO_OF_NOTCHES],
+    notch_angles: &[f32; NO_OF_NOTCHES],
+) -> [f32; NO_OF_NOTCHES] {
+    let mut out = *notch_angles;
+
+    for i in current_step..44 {
+        let idx = NOTCH_ADJUSTMENT_ORDER[i - NO_OF_CALIBRATION_POINTS];
+        out[idx] = legalize_notch(idx, measured_notch_angles, &out);
+    }
+
+    out
+}
+
+fn legalize_notch(
+    idx: usize,
+    measured_notch_angles: &[f32; NO_OF_NOTCHES],
+    notch_angles: &[f32; NO_OF_NOTCHES],
+) -> f32 {
+    let is_diagonal = (idx - 2) % 4 == 0;
+
+    let prev_idx = if is_diagonal {
+        (idx - 2 + NO_OF_NOTCHES) % NO_OF_NOTCHES
+    } else {
+        (idx - 1 + NO_OF_NOTCHES) % NO_OF_NOTCHES
+    };
+    let next_idx = if is_diagonal {
+        (idx + 2) % NO_OF_NOTCHES
+    } else {
+        (idx + 1) % NO_OF_NOTCHES
+    };
+
+    let prev_angle = notch_angles[prev_idx];
+    let next_angle = match notch_angles[next_idx] {
+        a if a < prev_angle => a + 2. * PI,
+        a => a,
+    };
+
+    let prev_meas_angle = measured_notch_angles[prev_idx];
+    let this_meas_angle = measured_notch_angles[idx];
+    let next_meas_angle = match measured_notch_angles[next_idx] {
+        a if a < prev_meas_angle => a + 2. * PI,
+        a => a,
+    };
+
+    let (cmp_amt, str_amt) = match is_diagonal {
+        true => (0.769, 1.3),
+        false => (0.666, 1.5),
+    };
+
+    let min_threshold = 0.15 / 0.975;
+    let deadzone_limit = 0.2875 / 0.95;
+    let deadzone_plus = 0.325 / 0.9375;
+
+    let lower_compress_limit = prev_angle + cmp_amt * (this_meas_angle - prev_meas_angle);
+    let upper_compress_limit = next_angle - cmp_amt * (next_meas_angle - this_meas_angle);
+
+    let lower_strech_limit = if prev_idx % 4 == 0
+        && !is_diagonal
+        && (next_meas_angle - this_meas_angle) > min_threshold
+        && (next_meas_angle - this_meas_angle) < deadzone_limit
+    {
+        next_angle - fmaxf(str_amt * (next_meas_angle - this_meas_angle), deadzone_plus)
+    } else {
+        next_angle - str_amt * (next_meas_angle - this_meas_angle)
+    };
+
+    let upper_strech_limit = if prev_idx % 4 == 0
+        && !is_diagonal
+        && (this_meas_angle - prev_meas_angle) > min_threshold
+        && (this_meas_angle - prev_meas_angle) < deadzone_limit
+    {
+        prev_angle + fmaxf(str_amt * (this_meas_angle - prev_meas_angle), deadzone_plus)
+    } else {
+        prev_angle + str_amt * (this_meas_angle - prev_meas_angle)
+    };
+
+    let lower_distort_limit = fmaxf(lower_compress_limit, lower_strech_limit);
+    let upper_distort_limit = match fminf(upper_compress_limit, upper_strech_limit) {
+        a if a < lower_distort_limit => a + 2. * PI,
+        a => a,
+    };
+
+    fminf(
+        upper_distort_limit,
+        fmaxf(notch_angles[idx], lower_distort_limit),
+    )
 }
 
 /// Sets notches to measured values if absent.

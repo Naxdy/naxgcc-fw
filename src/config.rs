@@ -2,7 +2,7 @@
  *  Storage for controller configuration, including helper functions & types, as well as sane defaults.
  *  Also includes necessary logic for configuring the controller & calibrating the sticks.
  */
-use core::f32::consts::PI;
+use core::{cmp::min, f32::consts::PI};
 
 use defmt::{error, info, warn, Format};
 use embassy_rp::{
@@ -14,7 +14,10 @@ use packed_struct::{derive::PackedStruct, PackedStruct};
 use crate::{
     helpers::{PackedFloat, ToPackedFloatArray, XyValuePair},
     input::{read_ext_adc, Stick, StickAxis, SPI_ACS_SHARED, SPI_CCS_SHARED, SPI_SHARED},
-    stick::{NotchStatus, NO_OF_ADJ_NOTCHES, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES},
+    stick::{
+        legalize_notches, AppliedCalibration, NotchStatus, NOTCH_ADJUSTMENT_ORDER,
+        NO_OF_ADJ_NOTCHES, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES,
+    },
     ADDR_OFFSET, FLASH_SIZE,
 };
 
@@ -384,6 +387,7 @@ struct StickCalibrationProcess<'a> {
     calibration_step: u8,
     gcc_config: &'a mut ControllerConfig,
     cal_points: [XyValuePair<f32>; NO_OF_CALIBRATION_POINTS],
+    applied_calibration: AppliedCalibration,
 }
 
 impl<'a> StickCalibrationProcess<'a> {
@@ -393,10 +397,15 @@ impl<'a> StickCalibrationProcess<'a> {
             calibration_step: 0,
             gcc_config,
             cal_points: [XyValuePair::default(); NO_OF_CALIBRATION_POINTS],
+            applied_calibration: AppliedCalibration::default(),
         }
     }
 
     async fn calibration_advance(&mut self) {
+        let stick_config = match self.which_stick {
+            Stick::ControlStick => &mut self.gcc_config.astick_config,
+            Stick::CStick => &mut self.gcc_config.cstick_config,
+        };
         let mut spi_unlocked = SPI_SHARED.lock().await;
         let mut spi_acs_unlocked = SPI_ACS_SHARED.lock().await;
         let mut spi_ccs_unlocked = SPI_CCS_SHARED.lock().await;
@@ -427,18 +436,52 @@ impl<'a> StickCalibrationProcess<'a> {
         // TODO: phob does something related to undo here
 
         if self.calibration_step == NO_OF_CALIBRATION_POINTS as u8 {
-            // TODO
+            stick_config.angles = *legalize_notches(
+                self.calibration_step as usize,
+                &self.applied_calibration.measured_notch_angles,
+                &self.applied_calibration.notch_angles,
+            )
+            .to_packed_float_array();
+
+            self.applied_calibration = AppliedCalibration::from_points(
+                &self.cal_points.map(|e| e.x),
+                &self.cal_points.map(|e| e.y),
+                &stick_config,
+                self.which_stick,
+            );
+        }
+
+        let mut notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
+            self.calibration_step - NO_OF_CALIBRATION_POINTS as u8,
+            NO_OF_ADJ_NOTCHES as u8 - 1,
+        ) as usize];
+
+        while self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8
+            && self.applied_calibration.cleaned_calibration.notch_status[notch_idx]
+                == NotchStatus::TertInactive
+            && self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8
+        {
+            stick_config.angles = *legalize_notches(
+                self.calibration_step as usize,
+                &self.applied_calibration.measured_notch_angles,
+                &stick_config.angles.map(|e| *e),
+            )
+            .to_packed_float_array();
+
+            self.calibration_step += 1;
+
+            notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
+                self.calibration_step - NO_OF_CALIBRATION_POINTS as u8,
+                NO_OF_ADJ_NOTCHES as u8 - 1,
+            ) as usize];
         }
 
         if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8 {
-            let stick_config = match self.which_stick {
-                Stick::ControlStick => &mut self.gcc_config.astick_config,
-                Stick::CStick => &mut self.gcc_config.cstick_config,
-            };
-
             stick_config.cal_points_x = self.cal_points.map(|p| p.x.into());
             stick_config.cal_points_y = self.cal_points.map(|p| p.y.into());
         }
+
+        info!("Finished calibrating stick {}", self.which_stick);
     }
 
     pub async fn calibrate_stick(&mut self) {
