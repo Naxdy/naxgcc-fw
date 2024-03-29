@@ -138,9 +138,9 @@ async fn update_stick_states<
     let mut cy_sum = 0u32;
 
     let end_time = Instant::now() + Duration::from_micros(300); // this seems kinda magic, and it is, but
-    let mut loop_time = Duration::from_millis(0);
 
-    while Instant::now() < end_time - loop_time {
+    // "do-while at home"
+    while {
         let loop_start = Instant::now();
 
         adc_count += 1;
@@ -173,8 +173,9 @@ async fn update_stick_states<
             &mut spi_ccs,
         ) as u32;
 
-        loop_time = Instant::now() - loop_start;
-    }
+        let loop_end = Instant::now();
+        loop_end < end_time - (loop_end - loop_start)
+    } {}
 
     trace!("ADC Count: {}", adc_count);
 
@@ -438,9 +439,6 @@ pub async fn update_button_state_task(
             &btn_ddown,
         );
 
-        // give other tasks a chance to do something
-        yield_now().await;
-
         // not every loop pass is going to update the stick state
         match STICK_SIGNAL.try_take() {
             Some(stick_state) => {
@@ -453,6 +451,9 @@ pub async fn update_button_state_task(
         }
 
         gcc_publisher.publish_immediate(gcc_state);
+
+        // give other tasks a chance to do something
+        yield_now().await;
     }
 }
 
