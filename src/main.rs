@@ -4,7 +4,6 @@
 
 #![no_std]
 #![no_main]
-mod calibrate;
 mod config;
 mod filter;
 mod gcc_hid;
@@ -12,7 +11,7 @@ mod helpers;
 mod input;
 mod stick;
 
-use calibrate::calibration_loop;
+use config::config_task;
 use config::ControllerConfig;
 use defmt::{debug, info};
 use embassy_executor::Executor;
@@ -119,6 +118,7 @@ fn main() -> ! {
     // pwm_brake.set_counter(255);
 
     executor0.run(|spawner| {
+        spawner.spawn(config_task()).unwrap();
         spawner
             .spawn(update_stick_states_task(
                 spi,
