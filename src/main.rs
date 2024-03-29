@@ -118,7 +118,14 @@ fn main() -> ! {
     // pwm_brake.set_counter(255);
 
     executor0.run(|spawner| {
-        spawner.spawn(config_task()).unwrap();
+        // Config task has to run on core0 because it reads and writes to flash.
+        spawner
+            .spawn(config_task(controller_config.clone(), flash))
+            .unwrap();
+
+        // Stick loop has to run on core0 because it makes use of SPI0.
+        // Perhaps in the future we can rewire the board to have it make use of SPI1 instead.
+        // This way it could be the sole task running on core1, and everything else could happen on core0.
         spawner
             .spawn(update_stick_states_task(
                 spi,

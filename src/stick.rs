@@ -6,7 +6,7 @@ use defmt::{debug, Format};
 use libm::{atan2f, cosf, fabs, fabsf, roundf, sinf, sqrtf};
 
 use crate::{
-    config::{ControllerConfig, StickConfig, DEFAULT_NOTCH_STATUS},
+    config::{ControllerConfig, StickConfig, DEFAULT_ANGLES, DEFAULT_NOTCH_STATUS},
     helpers::{ToRegularArray, XyValuePair},
     input::Stick,
 };
@@ -15,7 +15,7 @@ use crate::{
 const FIT_ORDER: usize = 3;
 const NUM_COEFFS: usize = FIT_ORDER + 1;
 pub const NO_OF_NOTCHES: usize = 16;
-const NO_OF_ADJ_NOTCHES: usize = 12;
+pub const NO_OF_ADJ_NOTCHES: usize = 12;
 pub const NO_OF_CALIBRATION_POINTS: usize = 32;
 const MAX_ORDER: usize = 20;
 
@@ -45,9 +45,9 @@ impl StickParams {
     /// Generate StickParams structs for the sticks, returned as a tuple of (analog_stick, c_stick)
     pub fn from_stick_config(stick_config: &StickConfig) -> Self {
         let cleaned_cal_points = CleanedCalibrationPoints::from_temp_calibration_points(
-            &stick_config.temp_cal_points_x.to_regular_array(),
-            &stick_config.temp_cal_points_y.to_regular_array(),
-            &stick_config.angles.to_regular_array(),
+            stick_config.cal_points_x.to_regular_array(),
+            stick_config.cal_points_y.to_regular_array(),
+            stick_config.angles.to_regular_array(),
         );
 
         let linearized_cal = LinearizedCalibration::from_calibration_points(&cleaned_cal_points);
@@ -68,7 +68,7 @@ impl StickParams {
     }
 }
 
-#[derive(Clone, Debug, Format, Copy)]
+#[derive(Clone, Debug, Format, Copy, Eq, PartialEq)]
 pub enum NotchStatus {
     TertInactive,
     TertActive,
@@ -387,6 +387,190 @@ impl NotchCalibration {
     }
 }
 
+struct AppliedCalibration {
+    stick_params: StickParams,
+    cleaned_calibration: CleanedCalibrationPoints,
+    notch_angles: [f32; NO_OF_NOTCHES],
+    measured_notch_angles: [f32; NO_OF_NOTCHES],
+}
+
+impl AppliedCalibration {
+    pub fn from_points(
+        cal_points_x: &[f32; NO_OF_CALIBRATION_POINTS],
+        cal_points_y: &[f32; NO_OF_CALIBRATION_POINTS],
+        stick_config: &StickConfig,
+        which_stick: Stick,
+    ) -> Self {
+        let mut stick_params = StickParams::from_stick_config(stick_config);
+
+        let angles = stick_config.angles;
+
+        let (stripped_cal_points_x, stripped_cal_points_y) =
+            strip_cal_points(cal_points_x, cal_points_y);
+
+        let stripped_cleaned_calibration = CleanedCalibrationPoints::from_temp_calibration_points(
+            &stripped_cal_points_x,
+            &stripped_cal_points_y,
+            &DEFAULT_ANGLES,
+        );
+
+        let linearized_calibration =
+            LinearizedCalibration::from_calibration_points(&stripped_cleaned_calibration);
+
+        stick_params.fit_coeffs = XyValuePair {
+            x: linearized_calibration.fit_coeffs.x.map(|e| e as f32),
+            y: linearized_calibration.fit_coeffs.y.map(|e| e as f32),
+        };
+
+        let notch_calibration = NotchCalibration::from_cleaned_and_linearized_calibration(
+            &stripped_cleaned_calibration,
+            &linearized_calibration,
+        );
+
+        stick_params.affine_coeffs = notch_calibration.affine_coeffs;
+        stick_params.boundary_angles = notch_calibration.boundary_angles;
+
+        let original_cleaned_calibration = CleanedCalibrationPoints::from_temp_calibration_points(
+            cal_points_x,
+            cal_points_y,
+            &DEFAULT_ANGLES,
+        );
+
+        let (transformed_cal_points_x, transformed_cal_points_y) = transform_cal_points(
+            &original_cleaned_calibration.cleaned_points.x,
+            &original_cleaned_calibration.cleaned_points.y,
+            &stick_params,
+            stick_config,
+        );
+
+        let measured_notch_angles =
+            compute_stick_angles(&transformed_cal_points_x, &transformed_cal_points_y);
+
+        let cleaned_with_measured_notch_angles =
+            CleanedCalibrationPoints::from_temp_calibration_points(
+                cal_points_x,
+                cal_points_y,
+                &measured_notch_angles,
+            );
+
+        let cleaned_notch_angles = clean_notches(
+            &measured_notch_angles,
+            &cleaned_with_measured_notch_angles.notch_status,
+        );
+
+        let cleaned_full = CleanedCalibrationPoints::from_temp_calibration_points(
+            cal_points_x,
+            cal_points_y,
+            &cleaned_notch_angles,
+        );
+
+        let linearized_full = LinearizedCalibration::from_calibration_points(&cleaned_full);
+
+        stick_params.fit_coeffs = XyValuePair {
+            x: linearized_full.fit_coeffs.x.map(|e| e as f32),
+            y: linearized_full.fit_coeffs.y.map(|e| e as f32),
+        };
+
+        let notch_calibrate_full = NotchCalibration::from_cleaned_and_linearized_calibration(
+            &cleaned_full,
+            &linearized_full,
+        );
+
+        stick_params.affine_coeffs = notch_calibrate_full.affine_coeffs;
+        stick_params.boundary_angles = notch_calibrate_full.boundary_angles;
+
+        Self {
+            stick_params,
+            measured_notch_angles,
+            notch_angles: cleaned_notch_angles,
+            cleaned_calibration: cleaned_full,
+        }
+    }
+}
+
+/// Sets notches to measured values if absent.
+fn clean_notches(
+    measured_notch_angles: &[f32; NO_OF_NOTCHES],
+    notch_status: &[NotchStatus; NO_OF_NOTCHES],
+) -> [f32; NO_OF_NOTCHES] {
+    let mut out = [0f32; NO_OF_NOTCHES];
+
+    for i in 0..NO_OF_NOTCHES {
+        if notch_status[i] == NotchStatus::TertInactive {
+            out[i] = measured_notch_angles[i];
+        }
+    }
+
+    out
+}
+
+fn angle_on_sphere(x: f32, y: f32) -> f32 {
+    let xx = sinf(x * MAX_STICK_ANGLE / 100.) * cosf(y * MAX_STICK_ANGLE / 100.);
+    let yy = cosf(x * MAX_STICK_ANGLE / 100.) * sinf(y * MAX_STICK_ANGLE / 100.);
+    match atan2f(yy, xx) {
+        a if a < 0. => a + 2. * PI,
+        a => a,
+    }
+}
+
+fn compute_stick_angles(
+    x_in: &[f32; NO_OF_NOTCHES + 1],
+    y_in: &[f32; NO_OF_NOTCHES + 1],
+) -> [f32; NO_OF_NOTCHES] {
+    let mut angles = [0f32; NO_OF_NOTCHES];
+
+    for i in 0..NO_OF_NOTCHES {
+        if i % 2 == 0 {
+            angles[i] = DEFAULT_ANGLES[i];
+        } else {
+            angles[i] = angle_on_sphere(x_in[i], y_in[i]);
+        }
+    }
+
+    angles
+}
+
+fn transform_cal_points(
+    cal_points_x: &[f32; NO_OF_NOTCHES + 1],
+    cal_points_y: &[f32; NO_OF_NOTCHES + 1],
+    stick_params: &StickParams,
+    stick_config: &StickConfig,
+) -> ([f32; NO_OF_NOTCHES + 1], [f32; NO_OF_NOTCHES + 1]) {
+    let mut transformed_points_x = [0f32; NO_OF_NOTCHES + 1];
+    let mut transformed_points_y = [0f32; NO_OF_NOTCHES + 1];
+
+    for i in 0..NO_OF_NOTCHES + 1 {
+        let x = linearize(cal_points_x[i], &stick_params.fit_coeffs.x);
+        let y = linearize(cal_points_y[i], &stick_params.fit_coeffs.y);
+        let (out_x, out_y) = notch_remap(x, y, stick_params, stick_config, true);
+        transformed_points_x[i] = out_x;
+        transformed_points_y[i] = out_y;
+    }
+
+    (transformed_points_x, transformed_points_y)
+}
+/// Removes the notches from un-cleaned cal points
+/// so we can get the original values of the notches after the affine transform.
+fn strip_cal_points(
+    cal_points_x: &[f32; NO_OF_CALIBRATION_POINTS],
+    cal_points_y: &[f32; NO_OF_CALIBRATION_POINTS],
+) -> (
+    [f32; NO_OF_CALIBRATION_POINTS],
+    [f32; NO_OF_CALIBRATION_POINTS],
+) {
+    let mut stripped_points_x = [0f32; NO_OF_CALIBRATION_POINTS];
+    let mut stripped_points_y = [0f32; NO_OF_CALIBRATION_POINTS];
+    for i in 0..NO_OF_CALIBRATION_POINTS {
+        (stripped_points_x[i], stripped_points_y[i]) = if (i + 1) % 4 == 0 {
+            (cal_points_x[0], cal_points_y[0])
+        } else {
+            (cal_points_x[i], cal_points_y[i])
+        }
+    }
+
+    (stripped_points_x, stripped_points_y)
+}
+
 fn inverse(in_mat: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
     let mut out_mat = [[0f32; 3]; 3];
 
@@ -561,7 +745,7 @@ fn fit_curve<const N: usize, const NCOEFFS: usize>(
 
 /// Compute the stick x/y coordinates from a given angle.
 /// The stick moves spherically, so it requires 3D trigonometry.
-fn calc_stick_values(angle: f32) -> (f32, f32) {
+pub fn calc_stick_values(angle: f32) -> (f32, f32) {
     let x =
         100. * atan2f(sinf(MAX_STICK_ANGLE) * cosf(angle), cosf(MAX_STICK_ANGLE)) / MAX_STICK_ANGLE;
     let y =
@@ -571,7 +755,7 @@ fn calc_stick_values(angle: f32) -> (f32, f32) {
 }
 
 #[link_section = ".time_critical.linearize"]
-pub fn linearize(point: f32, coefficients: &[f32; 4]) -> f32 {
+pub fn linearize(point: f32, coefficients: &[f32; NUM_COEFFS]) -> f32 {
     coefficients[0] * (point * point * point)
         + coefficients[1] * (point * point)
         + coefficients[2] * point
@@ -583,8 +767,7 @@ pub fn notch_remap(
     x_in: f32,
     y_in: f32,
     stick_params: &StickParams,
-    controller_config: &ControllerConfig,
-    which_stick: Stick,
+    stick_config: &StickConfig,
     is_calibrating: bool,
 ) -> (f32, f32) {
     //determine the angle between the x unit vector and the current position vector
@@ -606,10 +789,7 @@ pub fn notch_remap(
         NO_OF_NOTCHES - 1
     };
 
-    let stick_scale = match which_stick {
-        Stick::ControlStick => controller_config.astick_config.analog_scaler as f32 / 100.,
-        Stick::CStick => controller_config.cstick_config.analog_scaler as f32 / 100.,
-    };
+    let stick_scale = stick_config.analog_scaler as f32 / 100.;
 
     let mut x_out = stick_scale
         * (stick_params.affine_coeffs[region][0] * x_in
@@ -619,11 +799,6 @@ pub fn notch_remap(
             + stick_params.affine_coeffs[region][3] * y_in);
 
     if !is_calibrating {
-        let stick_config = match which_stick {
-            Stick::ControlStick => &controller_config.astick_config,
-            Stick::CStick => &controller_config.cstick_config,
-        };
-
         if stick_config.cardinal_snapping > 0 {
             if fabsf(x_out) < stick_config.cardinal_snapping as f32 + 0.5 && fabsf(y_out) >= 79.5 {
                 x_out = 0.;

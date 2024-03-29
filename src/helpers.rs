@@ -47,6 +47,12 @@ impl Deref for PackedFloat {
     }
 }
 
+impl From<f32> for PackedFloat {
+    fn from(f: f32) -> Self {
+        Self(f)
+    }
+}
+
 #[derive(Debug, Clone, Format, Default, Copy)]
 pub struct XyValuePair<T> {
     pub x: T,

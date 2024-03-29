@@ -4,7 +4,7 @@
  */
 use core::f32::consts::PI;
 
-use defmt::{info, warn, Format};
+use defmt::{error, info, warn, Format};
 use embassy_rp::{
     flash::{Async, Flash, ERASE_SIZE},
     peripherals::FLASH,
@@ -12,21 +12,57 @@ use embassy_rp::{
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
 use crate::{
-    helpers::{PackedFloat, ToPackedFloatArray},
-    stick::{NotchStatus, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES},
+    helpers::{PackedFloat, ToPackedFloatArray, XyValuePair},
+    input::{read_ext_adc, Stick, StickAxis, SPI_ACS_SHARED, SPI_CCS_SHARED, SPI_SHARED},
+    stick::{NotchStatus, NO_OF_ADJ_NOTCHES, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES},
     ADDR_OFFSET, FLASH_SIZE,
 };
 
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, pubsub::Subscriber};
+use embassy_sync::{
+    blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
+    pubsub::Subscriber,
+    signal::Signal,
+};
 use embassy_time::Timer;
 
 use crate::{gcc_hid::GcReport, input::CHANNEL_GCC_STATE};
+
+/// Whether we are currently calibrating the sticks. Updates are dispatched when the status changes.
+/// Initial status is assumed to be false.
+pub static SIGNAL_IS_CALIBRATING: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
+/// Dispatched when we want to override the GCC state for a short amount of time.
+pub static SIGNAL_OVERRIDE_GCC_STATE: Signal<CriticalSectionRawMutex, OverrideGcReportInstruction> =
+    Signal::new();
+
+/// Struct used for overriding the GCC state for a given amount of
+/// time, useful for providing feedback to the user e.g. if we just entered
+/// a certain mode.
+#[derive(Default, Debug, Clone, Format)]
+pub struct OverrideGcReportInstruction {
+    pub report: GcReport,
+    pub duration_ms: u64,
+}
 
 const CONFIG_MODE_ENTRY_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::Start,
     AwaitableButtons::A,
     AwaitableButtons::X,
     AwaitableButtons::Y,
+];
+
+const LSTICK_CALIBRATION_COMBO: [AwaitableButtons; 4] = [
+    AwaitableButtons::A,
+    AwaitableButtons::X,
+    AwaitableButtons::Y,
+    AwaitableButtons::L,
+];
+
+const RSTICK_CALIBRATION_COMBO: [AwaitableButtons; 4] = [
+    AwaitableButtons::A,
+    AwaitableButtons::X,
+    AwaitableButtons::Y,
+    AwaitableButtons::R,
 ];
 
 /// This doesn't need to be super fast, since it's only used
@@ -96,7 +132,7 @@ const DEFAULT_CAL_POINTS_Y: [f32; NO_OF_CALIBRATION_POINTS] = [
 	0.3000802760,0.3008482317
 ];
 
-const DEFAULT_ANGLES: [f32; NO_OF_NOTCHES] = [
+pub const DEFAULT_ANGLES: [f32; NO_OF_NOTCHES] = [
     0.,
     PI / 8.0,
     PI * 2. / 8.,
@@ -150,9 +186,9 @@ pub struct StickConfig {
     #[packed_field(size_bits = "8")]
     pub y_smoothing: u8,
     #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_x: [PackedFloat; 32],
+    pub cal_points_x: [PackedFloat; 32],
     #[packed_field(element_size_bytes = "4")]
-    pub temp_cal_points_y: [PackedFloat; 32],
+    pub cal_points_y: [PackedFloat; 32],
     #[packed_field(element_size_bytes = "4")]
     pub angles: [PackedFloat; 16],
 }
@@ -168,8 +204,8 @@ impl Default for StickConfig {
             y_smoothing: 0,
             cardinal_snapping: 0,
             analog_scaler: 100,
-            temp_cal_points_x: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
-            temp_cal_points_y: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
+            cal_points_x: *DEFAULT_CAL_POINTS_X.to_packed_float_array(),
+            cal_points_y: *DEFAULT_CAL_POINTS_Y.to_packed_float_array(),
             angles: *DEFAULT_ANGLES.to_packed_float_array(),
         }
     }
@@ -255,16 +291,17 @@ trait WaitForButtonPress {
     ) -> usize;
 }
 
-impl<'a, const I: usize, const J: usize, const K: usize> WaitForButtonPress
-    for Subscriber<'a, CriticalSectionRawMutex, GcReport, I, J, K>
+impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> WaitForButtonPress
+    for Subscriber<'a, T, GcReport, I, J, K>
 {
     async fn wait_for_button_press(&mut self, button_to_wait_for: &AwaitableButtons) {
         loop {
-            if match self.next_message_pure().await {
-                report => is_awaitable_button_pressed(&report, button_to_wait_for),
-            } {
+            let report = self.next_message_pure().await;
+
+            if is_awaitable_button_pressed(&report, button_to_wait_for) {
                 break;
             }
+
             Timer::after_millis(BUTTON_POLL_INTERVAL_MILLIS).await;
         }
     }
@@ -274,13 +311,15 @@ impl<'a, const I: usize, const J: usize, const K: usize> WaitForButtonPress
         buttons_to_wait_for: &[AwaitableButtons; N],
     ) {
         loop {
-            if match self.next_message_pure().await {
-                report => buttons_to_wait_for
-                    .iter()
-                    .all(|button| is_awaitable_button_pressed(&report, button)),
-            } {
+            let report = self.next_message_pure().await;
+
+            if buttons_to_wait_for
+                .iter()
+                .all(|button| is_awaitable_button_pressed(&report, button))
+            {
                 break;
             }
+
             Timer::after_millis(BUTTON_POLL_INTERVAL_MILLIS).await;
         }
     }
@@ -290,15 +329,14 @@ impl<'a, const I: usize, const J: usize, const K: usize> WaitForButtonPress
         buttons_to_wait_for: &[AwaitableButtons; N],
     ) -> AwaitableButtons {
         loop {
-            match self.next_message_pure().await {
-                report => {
-                    for button in buttons_to_wait_for {
-                        if is_awaitable_button_pressed(&report, button) {
-                            return *button;
-                        }
-                    }
+            let report = self.next_message_pure().await;
+
+            for button in buttons_to_wait_for {
+                if is_awaitable_button_pressed(&report, button) {
+                    return *button;
                 }
             }
+
             Timer::after_millis(BUTTON_POLL_INTERVAL_MILLIS).await;
         }
     }
@@ -308,18 +346,17 @@ impl<'a, const I: usize, const J: usize, const K: usize> WaitForButtonPress
         buttons_to_wait_for: &[[AwaitableButtons; N]; M],
     ) -> usize {
         loop {
-            match self.next_message_pure().await {
-                report => {
-                    for (i, buttons) in buttons_to_wait_for.iter().enumerate() {
-                        if buttons
-                            .iter()
-                            .all(|button| is_awaitable_button_pressed(&report, button))
-                        {
-                            return i;
-                        }
-                    }
+            let report = self.next_message_pure().await;
+
+            for (i, buttons) in buttons_to_wait_for.iter().enumerate() {
+                if buttons
+                    .iter()
+                    .all(|button| is_awaitable_button_pressed(&report, button))
+                {
+                    return i;
                 }
             }
+
             Timer::after_millis(BUTTON_POLL_INTERVAL_MILLIS).await;
         }
     }
@@ -336,18 +373,156 @@ fn is_awaitable_button_pressed(report: &GcReport, button_to_wait_for: &Awaitable
         AwaitableButtons::Left => report.buttons_1.dpad_left,
         AwaitableButtons::Right => report.buttons_1.dpad_right,
         AwaitableButtons::Start => report.buttons_2.button_start,
-        AwaitableButtons::L => report.buttons_2.button_l,
-        AwaitableButtons::R => report.buttons_2.button_r,
+        AwaitableButtons::L => report.buttons_2.button_l || report.trigger_l > 10,
+        AwaitableButtons::R => report.buttons_2.button_r || report.trigger_r > 10,
+    }
+}
+
+#[derive(Debug, Format)]
+struct StickCalibrationProcess<'a> {
+    which_stick: Stick,
+    calibration_step: u8,
+    gcc_config: &'a mut ControllerConfig,
+    cal_points: [XyValuePair<f32>; NO_OF_CALIBRATION_POINTS],
+}
+
+impl<'a> StickCalibrationProcess<'a> {
+    pub fn new(gcc_config: &'a mut ControllerConfig, which_stick: Stick) -> Self {
+        Self {
+            which_stick,
+            calibration_step: 0,
+            gcc_config,
+            cal_points: [XyValuePair::default(); NO_OF_CALIBRATION_POINTS],
+        }
+    }
+
+    async fn calibration_advance(&mut self) {
+        let mut spi_unlocked = SPI_SHARED.lock().await;
+        let mut spi_acs_unlocked = SPI_ACS_SHARED.lock().await;
+        let mut spi_ccs_unlocked = SPI_CCS_SHARED.lock().await;
+
+        let spi = spi_unlocked.as_mut().unwrap();
+        let spi_acs = spi_acs_unlocked.as_mut().unwrap();
+        let spi_ccs = spi_ccs_unlocked.as_mut().unwrap();
+
+        if self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 {
+            let mut x: f32 = 0.;
+            let mut y: f32 = 0.;
+
+            for _ in 0..128 {
+                x += read_ext_adc(self.which_stick, StickAxis::XAxis, spi, spi_acs, spi_ccs) as f32
+                    / 4096.0;
+                y += read_ext_adc(self.which_stick, StickAxis::YAxis, spi, spi_acs, spi_ccs) as f32
+                    / 4096.0;
+            }
+
+            x /= 128.;
+            y /= 128.;
+
+            self.cal_points[self.calibration_step as usize] = XyValuePair { x, y };
+        }
+
+        self.calibration_step += 1;
+
+        // TODO: phob does something related to undo here
+
+        if self.calibration_step == NO_OF_CALIBRATION_POINTS as u8 {
+            // TODO
+        }
+
+        if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8 {
+            let stick_config = match self.which_stick {
+                Stick::ControlStick => &mut self.gcc_config.astick_config,
+                Stick::CStick => &mut self.gcc_config.cstick_config,
+            };
+
+            stick_config.cal_points_x = self.cal_points.map(|p| p.x.into());
+            stick_config.cal_points_y = self.cal_points.map(|p| p.y.into());
+        }
+    }
+
+    pub async fn calibrate_stick(&mut self) {
+        todo!()
+    }
+}
+
+async fn configuration_main_loop<
+    'a,
+    M: RawMutex,
+    const C: usize,
+    const S: usize,
+    const P: usize,
+>(
+    current_config: &ControllerConfig,
+    mut flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
+    gcc_subscriber: &mut Subscriber<'a, M, GcReport, C, S, P>,
+) {
+    let mut final_config = current_config.clone();
+    let config_options = [LSTICK_CALIBRATION_COMBO, RSTICK_CALIBRATION_COMBO];
+
+    'main: loop {
+        match gcc_subscriber
+            .wait_and_filter_simultaneous_button_presses(&config_options)
+            .await
+        {
+            selection => match selection {
+                1 => {
+                    StickCalibrationProcess::new(&mut final_config, Stick::ControlStick)
+                        .calibrate_stick()
+                        .await
+                }
+                2 => {
+                    StickCalibrationProcess::new(&mut final_config, Stick::CStick)
+                        .calibrate_stick()
+                        .await
+                }
+                _ => {
+                    error!("Invalid selection: {}", selection);
+                    break 'main;
+                }
+            },
+        };
+
+        final_config.write_to_flash(&mut flash).unwrap();
     }
 }
 
 #[embassy_executor::task]
-pub async fn config_task() {
+pub async fn config_task(
+    current_config: ControllerConfig,
+    mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>,
+) {
     let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
 
     loop {
         gcc_subscriber
             .wait_for_simultaneous_button_presses(&CONFIG_MODE_ENTRY_COMBO)
             .await;
+
+        info!("Entering config mode.");
+
+        SIGNAL_OVERRIDE_GCC_STATE.signal(OverrideGcReportInstruction {
+            report: match GcReport::default() {
+                mut a => {
+                    a.trigger_r = 255;
+                    a.trigger_l = 255;
+                    a.buttons_2.button_l = true;
+                    a.buttons_2.button_r = true;
+                    a.buttons_1.button_x = true;
+                    a.buttons_1.button_y = true;
+                    a.buttons_1.button_a = true;
+                    a.stick_x = 127;
+                    a.stick_y = 127;
+                    a.cstick_x = 127;
+                    a.cstick_y = 127;
+                    a
+                }
+            },
+            duration_ms: 1000,
+        });
+
+        configuration_main_loop(&current_config, &mut flash, &mut gcc_subscriber).await;
+
+        info!("Exiting config mode.");
     }
 }

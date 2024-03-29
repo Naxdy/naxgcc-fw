@@ -5,19 +5,22 @@ use embassy_rp::{
     gpio::{AnyPin, Input, Output, Pin},
     peripherals::{
         FLASH, PIN_10, PIN_11, PIN_16, PIN_17, PIN_18, PIN_19, PIN_20, PIN_21, PIN_22, PIN_23,
-        PIN_24, PIN_5, PIN_8, PIN_9, PWM_CH4, PWM_CH6, SPI0,
+        PIN_24, PIN_5, PIN_8, PIN_9, PWM_CH4, PWM_CH6, SPI0, SPI1,
     },
     pwm::Pwm,
-    spi::Spi,
+    spi::{Blocking, Spi},
 };
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, pubsub::PubSubChannel, signal::Signal,
+    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, ThreadModeRawMutex},
+    mutex::Mutex,
+    pubsub::PubSubChannel,
+    signal::Signal,
 };
 use embassy_time::{Duration, Instant, Timer};
 use libm::{fmaxf, fminf};
 
 use crate::{
-    config::ControllerConfig,
+    config::{ControllerConfig, SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE},
     filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
     gcc_hid::GcReport,
     helpers::XyValuePair,
@@ -30,7 +33,17 @@ pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcReport, 1
     PubSubChannel::new();
 
 /// Used to send the stick state from the stick task to the main input task
-static STICK_SIGNAL: Signal<CriticalSectionRawMutex, StickState> = Signal::new();
+static SIGNAL_STICK_STATE: Signal<CriticalSectionRawMutex, StickState> = Signal::new();
+
+/// Used to send the raw stick values for the calibration task
+static SIGNAL_RAW_STICK_VALUES: Signal<CriticalSectionRawMutex, RawStickValues> = Signal::new();
+
+pub static SPI_SHARED: Mutex<ThreadModeRawMutex, Option<Spi<'static, SPI0, Blocking>>> =
+    Mutex::new(None);
+pub static SPI_ACS_SHARED: Mutex<ThreadModeRawMutex, Option<Output<'static, AnyPin>>> =
+    Mutex::new(None);
+pub static SPI_CCS_SHARED: Mutex<ThreadModeRawMutex, Option<Output<'static, AnyPin>>> =
+    Mutex::new(None);
 
 const STICK_HYST_VAL: f32 = 0.3;
 const FLOAT_ORIGIN: f32 = 127.5;
@@ -61,7 +74,7 @@ struct RawStickValues {
     c_unfiltered: XyValuePair<f32>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug, Clone, Format, Copy)]
 pub enum Stick {
     ControlStick,
     CStick,
@@ -74,7 +87,13 @@ pub enum StickAxis {
 }
 
 #[link_section = ".time_critical.read_ext_adc"]
-fn read_ext_adc<'a, Acs: Pin, Ccs: Pin, I: embassy_rp::spi::Instance, M: embassy_rp::spi::Mode>(
+pub fn read_ext_adc<
+    'a,
+    Acs: Pin,
+    Ccs: Pin,
+    I: embassy_rp::spi::Instance,
+    M: embassy_rp::spi::Mode,
+>(
     which_stick: Stick,
     which_axis: StickAxis,
     spi: &mut Spi<'a, I, M>,
@@ -110,16 +129,7 @@ fn read_ext_adc<'a, Acs: Pin, Ccs: Pin, I: embassy_rp::spi::Instance, M: embassy
 /// Gets the average stick state over a 1ms interval in a non-blocking fashion.
 /// Will wait until end_time is reached before continuing after reading the ADCs.
 #[link_section = ".time_critical.update_stick_states"]
-async fn update_stick_states<
-    'a,
-    Acs: Pin,
-    Ccs: Pin,
-    I: embassy_rp::spi::Instance,
-    M: embassy_rp::spi::Mode,
->(
-    mut spi: &mut Spi<'a, I, M>,
-    mut spi_acs: &mut Output<'a, Acs>,
-    mut spi_ccs: &mut Output<'a, Ccs>,
+async fn update_stick_states(
     current_stick_state: &StickState,
     controlstick_params: &StickParams,
     cstick_params: &StickParams,
@@ -130,6 +140,7 @@ async fn update_stick_states<
     old_stick_pos: &mut StickPositions,
     raw_stick_values: &mut RawStickValues,
     kalman_state: &mut KalmanState,
+    is_calibrating: bool,
 ) -> StickState {
     let mut adc_count = 0u32;
     let mut ax_sum = 0u32;
@@ -139,39 +150,23 @@ async fn update_stick_states<
 
     let end_time = Instant::now() + Duration::from_micros(300); // this seems kinda magic, and it is, but
 
+    let mut spi_unlocked = SPI_SHARED.lock().await;
+    let mut spi_acs_unlocked = SPI_ACS_SHARED.lock().await;
+    let mut spi_ccs_unlocked = SPI_CCS_SHARED.lock().await;
+
+    let spi = spi_unlocked.as_mut().unwrap();
+    let spi_acs = spi_acs_unlocked.as_mut().unwrap();
+    let spi_ccs = spi_ccs_unlocked.as_mut().unwrap();
+
     // "do-while at home"
     while {
         let loop_start = Instant::now();
 
         adc_count += 1;
-        ax_sum += read_ext_adc(
-            Stick::ControlStick,
-            StickAxis::XAxis,
-            &mut spi,
-            &mut spi_acs,
-            &mut spi_ccs,
-        ) as u32;
-        ay_sum += read_ext_adc(
-            Stick::ControlStick,
-            StickAxis::YAxis,
-            &mut spi,
-            &mut spi_acs,
-            &mut spi_ccs,
-        ) as u32;
-        cx_sum += read_ext_adc(
-            Stick::CStick,
-            StickAxis::XAxis,
-            &mut spi,
-            &mut spi_acs,
-            &mut spi_ccs,
-        ) as u32;
-        cy_sum += read_ext_adc(
-            Stick::CStick,
-            StickAxis::YAxis,
-            &mut spi,
-            &mut spi_acs,
-            &mut spi_ccs,
-        ) as u32;
+        ax_sum += read_ext_adc(Stick::ControlStick, StickAxis::XAxis, spi, spi_acs, spi_ccs) as u32;
+        ay_sum += read_ext_adc(Stick::ControlStick, StickAxis::YAxis, spi, spi_acs, spi_ccs) as u32;
+        cx_sum += read_ext_adc(Stick::CStick, StickAxis::XAxis, spi, spi_acs, spi_ccs) as u32;
+        cy_sum += read_ext_adc(Stick::CStick, StickAxis::YAxis, spi, spi_acs, spi_ccs) as u32;
 
         let loop_end = Instant::now();
         loop_end < end_time - (loop_end - loop_start)
@@ -265,7 +260,7 @@ async fn update_stick_states<
         controlstick_params,
         controller_config,
         Stick::ControlStick,
-        false,
+        is_calibrating,
     ) {
         (x, y) => XyValuePair { x, y },
     };
@@ -275,7 +270,7 @@ async fn update_stick_states<
         cstick_params,
         controller_config,
         Stick::CStick,
-        false,
+        is_calibrating,
     ) {
         (x, y) => XyValuePair { x, y },
     };
@@ -285,7 +280,7 @@ async fn update_stick_states<
         controlstick_params,
         controller_config,
         Stick::ControlStick,
-        false,
+        is_calibrating,
     ) {
         (x, y) => XyValuePair { x, y },
     };
@@ -295,7 +290,7 @@ async fn update_stick_states<
         cstick_params,
         controller_config,
         Stick::CStick,
-        false,
+        is_calibrating,
     ) {
         (x, y) => XyValuePair { x, y },
     };
@@ -440,15 +435,18 @@ pub async fn update_button_state_task(
         );
 
         // not every loop pass is going to update the stick state
-        match STICK_SIGNAL.try_take() {
-            Some(stick_state) => {
-                gcc_state.stick_x = stick_state.ax;
-                gcc_state.stick_y = stick_state.ay;
-                gcc_state.cstick_x = stick_state.cx;
-                gcc_state.cstick_y = stick_state.cy;
-            }
-            None => (),
+        if let Some(stick_state) = SIGNAL_STICK_STATE.try_take() {
+            gcc_state.stick_x = stick_state.ax;
+            gcc_state.stick_y = stick_state.ay;
+            gcc_state.cstick_x = stick_state.cx;
+            gcc_state.cstick_y = stick_state.cy;
         }
+
+        // check for a gcc state override (usually coming from the config task)
+        if let Some(override_gcc_state) = SIGNAL_OVERRIDE_GCC_STATE.try_take() {
+            gcc_publisher.publish_immediate(override_gcc_state.report);
+            Timer::after_millis(override_gcc_state.duration_ms).await;
+        };
 
         gcc_publisher.publish_immediate(gcc_state);
 
@@ -459,6 +457,8 @@ pub async fn update_button_state_task(
 
 /// Task responsible for updating the stick states.
 /// Publishes the result to STICK_SIGNAL.
+///
+/// Has to run on core0 because it makes use of SPI0.
 #[embassy_executor::task]
 pub async fn update_stick_states_task(
     mut spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
@@ -490,13 +490,12 @@ pub async fn update_stick_states_task(
     // the time at which the current loop iteration should end
     let mut end_time = Instant::now() + Duration::from_micros(1000);
 
+    let mut is_calibrating = false;
+
     loop {
         let timer = Timer::at(end_time);
 
         current_stick_state = update_stick_states(
-            &mut spi,
-            &mut spi_acs,
-            &mut spi_ccs,
             &current_stick_state,
             &controlstick_params,
             &cstick_params,
@@ -507,22 +506,27 @@ pub async fn update_stick_states_task(
             &mut old_stick_pos,
             &mut raw_stick_values,
             &mut kalman_state,
+            is_calibrating,
         )
         .await;
 
         timer.await;
         end_time += Duration::from_micros(1000);
 
+        if let Some(new_calibrating) = SIGNAL_IS_CALIBRATING.try_take() {
+            is_calibrating = new_calibrating;
+        }
+
         match Instant::now() {
             n => {
                 match (n - last_loop_time).as_micros() {
-                    a if a > 1100 => debug!("Loop took {} us", a),
+                    a if a > 1999 => debug!("Loop took {} us", a),
                     _ => {}
                 };
                 last_loop_time = n;
             }
         };
 
-        STICK_SIGNAL.signal(current_stick_state.clone());
+        SIGNAL_STICK_STATE.signal(current_stick_state.clone());
     }
 }

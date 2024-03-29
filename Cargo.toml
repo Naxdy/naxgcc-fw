@@ -62,6 +62,7 @@ debug = 2
 debug-assertions = true
 incremental = false
 opt-level = 3
+lto = "fat"
 overflow-checks = true
 
 # cargo build/run --release
