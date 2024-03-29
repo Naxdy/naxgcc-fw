@@ -258,8 +258,7 @@ async fn update_stick_states(
         pos_x,
         pos_y,
         controlstick_params,
-        controller_config,
-        Stick::ControlStick,
+        &controller_config.astick_config,
         is_calibrating,
     ) {
         (x, y) => XyValuePair { x, y },
@@ -268,8 +267,7 @@ async fn update_stick_states(
         pos_cx_filt,
         pos_cy_filt,
         cstick_params,
-        controller_config,
-        Stick::CStick,
+        &controller_config.cstick_config,
         is_calibrating,
     ) {
         (x, y) => XyValuePair { x, y },
@@ -278,8 +276,7 @@ async fn update_stick_states(
         raw_stick_values.a_linearized.x,
         raw_stick_values.a_linearized.y,
         controlstick_params,
-        controller_config,
-        Stick::ControlStick,
+        &controller_config.astick_config,
         is_calibrating,
     ) {
         (x, y) => XyValuePair { x, y },
@@ -288,8 +285,7 @@ async fn update_stick_states(
         raw_stick_values.c_linearized.x,
         raw_stick_values.c_linearized.y,
         cstick_params,
-        controller_config,
-        Stick::CStick,
+        &controller_config.cstick_config,
         is_calibrating,
     ) {
         (x, y) => XyValuePair { x, y },
