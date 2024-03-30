@@ -38,9 +38,6 @@ pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcReport, 1
 /// Used to send the stick state from the stick task to the main input task
 static SIGNAL_STICK_STATE: Signal<CriticalSectionRawMutex, StickState> = Signal::new();
 
-/// Used to send the raw stick values for the calibration task
-static SIGNAL_RAW_STICK_VALUES: Signal<CriticalSectionRawMutex, RawStickValues> = Signal::new();
-
 pub static SPI_SHARED: Mutex<ThreadModeRawMutex, Option<Spi<'static, SPI0, Blocking>>> =
     Mutex::new(None);
 pub static SPI_ACS_SHARED: Mutex<ThreadModeRawMutex, Option<Output<'static, AnyPin>>> =
@@ -151,7 +148,7 @@ async fn update_stick_states(
     let mut cx_sum = 0u32;
     let mut cy_sum = 0u32;
 
-    let end_time = Instant::now() + Duration::from_micros(300); // this seems kinda magic, and it is, but
+    let end_time = Instant::now() + Duration::from_micros(250); // this seems kinda magic, and it is, but
 
     let mut spi_unlocked = SPI_SHARED.lock().await;
     let mut spi_acs_unlocked = SPI_ACS_SHARED.lock().await;
@@ -487,6 +484,7 @@ pub async fn update_stick_states_task(
     spi_ccs: Output<'static, AnyPin>,
     controller_config: ControllerConfig,
 ) {
+    Timer::after_secs(1).await;
     *SPI_SHARED.lock().await = Some(spi);
     *SPI_ACS_SHARED.lock().await = Some(spi_acs);
     *SPI_CCS_SHARED.lock().await = Some(spi_ccs);
@@ -494,6 +492,8 @@ pub async fn update_stick_states_task(
     let controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
     let cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
     let filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
+
+    info!("Controlstick params: {:?}", controlstick_params);
 
     let mut current_stick_state = StickState {
         ax: 127,
@@ -538,7 +538,7 @@ pub async fn update_stick_states_task(
         match Instant::now() {
             n => {
                 match (n - last_loop_time).as_micros() {
-                    a if a > 1 => debug!("Loop took {} us", a),
+                    a if a > 19999 => debug!("Loop took {} us", a),
                     _ => {}
                 };
                 last_loop_time = n;
@@ -548,5 +548,14 @@ pub async fn update_stick_states_task(
         SIGNAL_STICK_STATE.signal(current_stick_state.clone());
 
         ticker.next().await;
+
+        #[cfg(debug_assertions)]
+        {
+            // give other tasks a chance to do something
+            // in debug, this loop runs noticeably slower, so this is necessary
+            // prefer running with `cargo run --release` for this reason, when
+            // developing stick related features
+            yield_now().await;
+        }
     }
 }

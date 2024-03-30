@@ -2,7 +2,7 @@
 
 use core::f32::consts::PI;
 
-use defmt::{debug, Format};
+use defmt::{debug, info, trace, Format};
 use libm::{atan2f, cosf, fabs, fabsf, fmaxf, fminf, roundf, sinf, sqrtf};
 
 use crate::{
@@ -107,10 +107,11 @@ impl CleanedCalibrationPoints {
     ) -> Self {
         let mut out = Self::default();
 
-        debug!("Raw calibration points:");
-        for i in 0..NO_OF_CALIBRATION_POINTS {
-            debug!("({}, {})", cal_points_x[i], cal_points_y[i])
-        }
+        trace!(
+            "Raw calibration points x {} and y {}:",
+            cal_points_x,
+            cal_points_y
+        );
 
         debug!("Notch angles: {}", notch_angles);
 
@@ -132,32 +133,45 @@ impl CleanedCalibrationPoints {
         // TODO: put the below in a macro to clean it up a bit, once it's confirmed to work
         // remove the largest and smallest two origin values to remove outliers
         // first, find their indices
-        let mut i = 0;
-        let x_by_size = &mut cal_points_x.map(|e| {
-            i += 1;
-            (i - 1, e)
-        });
+        let mut smallest_x = 0;
+        let mut small_x = 0;
+        let mut large_x = 0;
+        let mut largest_x = 0;
 
-        tiny_sort::unstable::sort_by(x_by_size, |a, b| a.1.partial_cmp(&b.1).unwrap());
+        let mut smallest_y = 0;
+        let mut small_y = 0;
+        let mut large_y = 0;
+        let mut largest_y = 0;
 
-        let smallest_x = x_by_size[0].0;
-        let small_x = x_by_size[1].0;
-        let large_x = x_by_size[x_by_size.len() - 2].0;
-        let largest_x = x_by_size[x_by_size.len() - 1].0;
+        for i in 0..NO_OF_NOTCHES {
+            if cal_points_x[i * 2] < cal_points_x[smallest_x] {
+                small_x = smallest_x;
+                smallest_x = i * 2;
+            } else if cal_points_x[i * 2] < cal_points_x[small_x] {
+                small_x = i * 2;
+            }
 
-        // do the same for y
-        let mut i = 0;
-        let y_by_size = &mut cal_points_y.map(|e| {
-            i += 1;
-            (i - 1, e)
-        });
+            if cal_points_x[i * 2] > cal_points_x[largest_x] {
+                large_x = largest_x;
+                largest_x = i * 2;
+            } else if cal_points_x[i * 2] > cal_points_x[large_x] {
+                large_x = i * 2;
+            }
 
-        tiny_sort::unstable::sort_by(y_by_size, |a, b| a.1.partial_cmp(&b.1).unwrap());
+            if cal_points_y[i * 2] < cal_points_y[smallest_y] {
+                small_y = smallest_y;
+                smallest_y = i * 2;
+            } else if cal_points_y[i * 2] < cal_points_y[small_y] {
+                small_y = i * 2;
+            }
 
-        let smallest_y = y_by_size[0].0;
-        let small_y = y_by_size[1].0;
-        let large_y = y_by_size[y_by_size.len() - 2].0;
-        let largest_y = y_by_size[y_by_size.len() - 1].0;
+            if cal_points_y[i * 2] > cal_points_y[largest_y] {
+                large_y = largest_y;
+                largest_y = i * 2;
+            } else if cal_points_y[i * 2] > cal_points_y[large_y] {
+                large_y = i * 2;
+            }
+        }
 
         // TODO: make this whole thing a function? it looks very ugly
         out.cleaned_points.x[0] -= cal_points_x[smallest_x];
@@ -180,8 +194,8 @@ impl CleanedCalibrationPoints {
 
             // if the cleaned point was at the center and would be a firefox notch
             // average the previous and next points (cardinal & diagonal) for some sanity
-            if mag < 0.02 && (i % 2 == 0) {
-                let prev_index = ((i + NO_OF_NOTCHES - 1) % NO_OF_NOTCHES) + 1;
+            if mag < 0.02 && (i % 2 != 0) {
+                let prev_index = ((i - 1 + NO_OF_NOTCHES) % NO_OF_NOTCHES) + 1;
                 let next_index = ((i + 1) % NO_OF_NOTCHES) + 1;
 
                 out.cleaned_points.x[i + 1] =
@@ -194,7 +208,7 @@ impl CleanedCalibrationPoints {
                 out.notch_points.y[i + 1] =
                     (out.notch_points.y[prev_index] + out.notch_points.y[next_index]) / 2.0;
 
-                debug!("Skipping notch {}", i + 1);
+                trace!("Skipping notch {}", i + 1);
 
                 // Mark that notch adjustment should be skipped for this
                 out.notch_status[i] = NotchStatus::TertInactive;
@@ -203,18 +217,15 @@ impl CleanedCalibrationPoints {
             }
         }
 
-        debug!("Final points:");
-        for i in 0..=NO_OF_NOTCHES {
-            debug!(
-                "Cleaned: ({}, {}), Notch: ({}, {})",
-                out.cleaned_points.x[i],
-                out.cleaned_points.y[i],
-                out.notch_points.x[i],
-                out.notch_points.y[i],
-            );
-        }
+        trace!(
+            "Final points clean_x: {:?}, clean_y: {:?}, notch_x: {:?}, notch_y: {:?}",
+            out.cleaned_points.x,
+            out.cleaned_points.y,
+            out.notch_points.x,
+            out.notch_points.y
+        );
 
-        debug!("The notch statuses are: {:?}", out.notch_status);
+        trace!("The notch statuses are: {:?}", out.notch_status);
 
         out
     }
@@ -282,6 +293,11 @@ impl LinearizedCalibration {
             linearized_points_x[i] = linearize(in_x[i] as f32, &fit_coeffs_x.map(|e| e as f32));
             linearized_points_y[i] = linearize(in_y[i] as f32, &fit_coeffs_y.map(|e| e as f32));
         }
+
+        debug!(
+            "Linearized points x: {:?}, y: {:?}",
+            linearized_points_x, linearized_points_y
+        );
 
         Self {
             fit_coeffs: XyValuePair {
@@ -352,14 +368,14 @@ impl NotchCalibration {
                 points_out[2][1] = 1.;
                 points_out[2][2] = 1.;
             }
-            debug!("In points: {:?}", points_in);
-            debug!("Out points: {:?}", points_out);
+            trace!("In points: {:?}", points_in);
+            trace!("Out points: {:?}", points_out);
 
             let temp = inverse(&points_in);
 
             let a = matrix_mult(&points_out, &temp);
 
-            debug!("The transform matrix is: {:?}", a);
+            trace!("The transform matrix is: {:?}", a);
 
             for j in 0..2 {
                 for k in 0..2 {
@@ -367,7 +383,7 @@ impl NotchCalibration {
                 }
             }
 
-            debug!(
+            trace!(
                 "Transform coefficients for this region are: {:?}",
                 out.affine_coeffs[i - 1]
             );
@@ -387,12 +403,23 @@ impl NotchCalibration {
     }
 }
 
-#[derive(Debug, Clone, Format, Default)]
+#[derive(Debug, Clone, Format)]
 pub struct AppliedCalibration {
     pub stick_params: StickParams,
     pub cleaned_calibration: CleanedCalibrationPoints,
     pub notch_angles: [f32; NO_OF_NOTCHES],
     pub measured_notch_angles: [f32; NO_OF_NOTCHES],
+}
+
+impl Default for AppliedCalibration {
+    fn default() -> Self {
+        Self {
+            stick_params: StickParams::default(),
+            cleaned_calibration: CleanedCalibrationPoints::default(),
+            notch_angles: DEFAULT_ANGLES,
+            measured_notch_angles: [0f32; NO_OF_NOTCHES],
+        }
+    }
 }
 
 impl AppliedCalibration {
@@ -403,8 +430,6 @@ impl AppliedCalibration {
         which_stick: Stick,
     ) -> Self {
         let mut stick_params = StickParams::from_stick_config(stick_config);
-
-        let angles = stick_config.angles;
 
         let (stripped_cal_points_x, stripped_cal_points_y) =
             strip_cal_points(cal_points_x, cal_points_y);
@@ -444,8 +469,15 @@ impl AppliedCalibration {
             stick_config,
         );
 
+        info!(
+            "Transformed calibration points x: {:?}, y: {:?}",
+            transformed_cal_points_x, transformed_cal_points_y
+        );
+
         let measured_notch_angles =
             compute_stick_angles(&transformed_cal_points_x, &transformed_cal_points_y);
+
+        info!("Measured notch angles: {:?}", measured_notch_angles);
 
         let cleaned_with_measured_notch_angles =
             CleanedCalibrationPoints::from_temp_calibration_points(
@@ -535,9 +567,10 @@ fn legalize_notch(
         a => a,
     };
 
-    let (cmp_amt, str_amt) = match is_diagonal {
-        true => (0.769, 1.3),
-        false => (0.666, 1.5),
+    let (cmp_amt, str_amt) = if is_diagonal {
+        (0.769, 1.3)
+    } else {
+        (0.666, 1.5)
     };
 
     let min_threshold = 0.15 / 0.975;
@@ -547,7 +580,7 @@ fn legalize_notch(
     let lower_compress_limit = prev_angle + cmp_amt * (this_meas_angle - prev_meas_angle);
     let upper_compress_limit = next_angle - cmp_amt * (next_meas_angle - this_meas_angle);
 
-    let lower_strech_limit = if prev_idx % 4 == 0
+    let lower_strech_limit = if next_idx % 4 == 0
         && !is_diagonal
         && (next_meas_angle - this_meas_angle) > min_threshold
         && (next_meas_angle - this_meas_angle) < deadzone_limit
@@ -614,7 +647,13 @@ fn compute_stick_angles(
         if i % 2 == 0 {
             angles[i] = DEFAULT_ANGLES[i];
         } else {
-            angles[i] = angle_on_sphere(x_in[i], y_in[i]);
+            angles[i] = angle_on_sphere(x_in[i + 1], y_in[i + 1]);
+            debug!(
+                "Computed angle for x,y: ({}, {}) is: {}",
+                x_in[i + 1],
+                y_in[i + 1],
+                angles[i]
+            );
         }
     }
 
@@ -665,19 +704,21 @@ fn strip_cal_points(
 fn inverse(in_mat: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
     let mut out_mat = [[0f32; 3]; 3];
 
-    let det = in_mat[0][0] * (in_mat[1][1] * in_mat[2][2] - in_mat[1][2] * in_mat[2][1])
+    let det = in_mat[0][0] * (in_mat[1][1] * in_mat[2][2] - in_mat[2][1] * in_mat[1][2])
         - in_mat[0][1] * (in_mat[1][0] * in_mat[2][2] - in_mat[1][2] * in_mat[2][0])
         + in_mat[0][2] * (in_mat[1][0] * in_mat[2][1] - in_mat[1][1] * in_mat[2][0]);
 
-    out_mat[0][0] = (in_mat[1][1] * in_mat[2][2] - in_mat[1][2] * in_mat[2][1]) / det;
-    out_mat[0][1] = (in_mat[0][2] * in_mat[2][1] - in_mat[0][1] * in_mat[2][2]) / det;
-    out_mat[0][2] = (in_mat[0][1] * in_mat[1][2] - in_mat[0][2] * in_mat[1][1]) / det;
-    out_mat[1][0] = (in_mat[1][2] * in_mat[2][0] - in_mat[1][0] * in_mat[2][2]) / det;
-    out_mat[1][1] = (in_mat[0][0] * in_mat[2][2] - in_mat[0][2] * in_mat[2][0]) / det;
-    out_mat[1][2] = (in_mat[0][2] * in_mat[1][0] - in_mat[0][0] * in_mat[1][2]) / det;
-    out_mat[2][0] = (in_mat[1][0] * in_mat[2][1] - in_mat[1][1] * in_mat[2][0]) / det;
-    out_mat[2][1] = (in_mat[0][1] * in_mat[2][0] - in_mat[0][0] * in_mat[2][1]) / det;
-    out_mat[2][2] = (in_mat[0][0] * in_mat[1][1] - in_mat[0][1] * in_mat[1][0]) / det;
+    let invdet = 1. / det;
+
+    out_mat[0][0] = (in_mat[1][1] * in_mat[2][2] - in_mat[2][1] * in_mat[1][2]) * invdet;
+    out_mat[0][1] = (in_mat[0][2] * in_mat[2][1] - in_mat[0][1] * in_mat[2][2]) * invdet;
+    out_mat[0][2] = (in_mat[0][1] * in_mat[1][2] - in_mat[0][2] * in_mat[1][1]) * invdet;
+    out_mat[1][0] = (in_mat[1][2] * in_mat[2][0] - in_mat[1][0] * in_mat[2][2]) * invdet;
+    out_mat[1][1] = (in_mat[0][0] * in_mat[2][2] - in_mat[0][2] * in_mat[2][0]) * invdet;
+    out_mat[1][2] = (in_mat[1][0] * in_mat[0][2] - in_mat[0][0] * in_mat[1][2]) * invdet;
+    out_mat[2][0] = (in_mat[1][0] * in_mat[2][1] - in_mat[2][0] * in_mat[1][1]) * invdet;
+    out_mat[2][1] = (in_mat[2][0] * in_mat[0][1] - in_mat[0][0] * in_mat[2][1]) * invdet;
+    out_mat[2][2] = (in_mat[0][0] * in_mat[1][1] - in_mat[1][0] * in_mat[0][1]) * invdet;
 
     out_mat
 }
@@ -729,7 +770,8 @@ fn sub_col<const N: usize>(
 
 /// Calculate the determinant of a matrix
 fn det<const N: usize>(matrix: &[[f64; N]; N]) -> f64 {
-    let sign = trianglize(matrix);
+    let mut matrix = *matrix;
+    let sign = trianglize(&mut matrix);
 
     if sign == 0 {
         return 0.;
@@ -745,7 +787,7 @@ fn det<const N: usize>(matrix: &[[f64; N]; N]) -> f64 {
 }
 
 /// Trianglize a matrix
-fn trianglize<const N: usize>(matrix: &[[f64; N]; N]) -> i32 {
+fn trianglize<const N: usize>(matrix: &mut [[f64; N]; N]) -> i32 {
     let mut sign = 1;
     let mut matrix = *matrix;
 

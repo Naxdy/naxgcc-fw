@@ -25,7 +25,7 @@ use crate::{
 };
 
 use embassy_sync::{
-    blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
+    blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex, ThreadModeRawMutex},
     pubsub::{PubSubBehavior, Subscriber},
     signal::Signal,
 };
@@ -35,7 +35,7 @@ use crate::{gcc_hid::GcReport, input::CHANNEL_GCC_STATE};
 
 /// Whether we are currently calibrating the sticks. Updates are dispatched when the status changes.
 /// Initial status is assumed to be false.
-pub static SIGNAL_IS_CALIBRATING: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+pub static SIGNAL_IS_CALIBRATING: Signal<ThreadModeRawMutex, bool> = Signal::new();
 
 /// Signal used to override the stick state in order to display desired stick positions during calibration.
 pub static SIGNAL_OVERRIDE_STICK_STATE: Signal<
@@ -624,6 +624,8 @@ pub async fn config_task(
     mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>,
 ) {
     let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
+
+    info!("Config task is running.");
 
     loop {
         gcc_subscriber

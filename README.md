@@ -44,4 +44,4 @@ This is how it is when you're playing with a PhobGCC (the best GCC currently ava
 
 ### The Solution
 
-Since the NaxGCC connects directly to the console and eliminates the joybus protocol entirely, there is no second polling rate. The scan rate of the NaxGCC's sticks is 1ms, and the buttons are scanned as quickly as the MCU allows (I've measured ~200us -ish). While not quite reaching the ~8.66ms window length, the sticks have a ~7.66ms window of guaranteed input integrity, and the buttons are getting fairly close to ~8.3ms (half a frame).
+Since the NaxGCC connects directly to the console and eliminates the joybus protocol entirely, there is no second polling rate. The scan rate of the NaxGCC's sticks is 1ms, and the buttons are scanned as quickly as the MCU allows (I've measured ~50s on average, worst outliers being ~100us). While not quite reaching the ~8.66ms window length, the sticks have a ~7.66ms window of guaranteed input integrity, and the buttons are getting fairly close to ~8.56ms at worst (more than half a frame).
