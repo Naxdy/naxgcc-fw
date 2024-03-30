@@ -16,7 +16,7 @@ use embassy_sync::{
     pubsub::PubSubChannel,
     signal::Signal,
 };
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use libm::{fmaxf, fminf};
 
 use crate::{
@@ -511,14 +511,11 @@ pub async fn update_stick_states_task(
 
     debug!("Entering stick update loop.");
 
-    // the time at which the current loop iteration should end
-    let mut end_time = Instant::now() + Duration::from_micros(1000);
-
     let mut is_calibrating = false;
 
-    loop {
-        let timer = Timer::at(end_time);
+    let mut ticker = Ticker::every(Duration::from_hz(1000));
 
+    loop {
         current_stick_state = update_stick_states(
             &current_stick_state,
             &controlstick_params,
@@ -534,9 +531,6 @@ pub async fn update_stick_states_task(
         )
         .await;
 
-        timer.await;
-        end_time += Duration::from_micros(1000);
-
         if let Some(new_calibrating) = SIGNAL_IS_CALIBRATING.try_take() {
             is_calibrating = new_calibrating;
         }
@@ -544,7 +538,7 @@ pub async fn update_stick_states_task(
         match Instant::now() {
             n => {
                 match (n - last_loop_time).as_micros() {
-                    a if a > 1999 => debug!("Loop took {} us", a),
+                    a if a > 1 => debug!("Loop took {} us", a),
                     _ => {}
                 };
                 last_loop_time = n;
@@ -552,5 +546,7 @@ pub async fn update_stick_states_task(
         };
 
         SIGNAL_STICK_STATE.signal(current_stick_state.clone());
+
+        ticker.next().await;
     }
 }
