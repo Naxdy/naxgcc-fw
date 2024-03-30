@@ -547,7 +547,7 @@ impl<'a> StickCalibrationProcess<'a> {
                 .await;
 
             // Prevent accidental double presses
-            Timer::after_millis(500).await;
+            Timer::after_millis(100).await;
 
             gcc_subscriber
                 .wait_for_button_press(&AwaitableButtons::A)
