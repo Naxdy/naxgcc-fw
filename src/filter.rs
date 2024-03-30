@@ -180,6 +180,7 @@ pub struct KalmanState {
 
 impl KalmanState {
     // runs kalman filter
+    #[link_section = ".time_critical.run_kalman"]
     pub fn run_kalman(
         &mut self,
         x_z: f32,
@@ -291,6 +292,7 @@ impl KalmanState {
 ///  output at the rim longer when released.
 ///
 /// Output is a tuple of the x and y positions.
+#[link_section = ".time_critical.run_waveshaping"]
 pub fn run_waveshaping(
     x_pos: f32,
     y_pos: f32,
