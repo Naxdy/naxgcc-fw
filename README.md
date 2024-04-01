@@ -2,7 +2,7 @@
 
 This repo houses the firmware for the NaxGCC, a GameCube-style controller built on the [PhobGCC](https://github.com/PhobGCC/PhobGCC-SW). The firmware can also be used as an optional firmware for the PhobGCC, though the PhobGCC will then have to be connected to the console directly via USB.
 
-Like the PhobGCC, the NaxGCC uses hall effect sensors instead of potentiometers for stick input. Additionally, it connects directly to the console via USB, by pretending to be a GCC adapter with 1 controller (itself) connected. This eliminates one additional layer of polling, and thus reduces perceived latency and improves input consistency. The NaxGCC firmware makes use of the [embassy-rs](https://github.com/embassy-rs/embassy) framework for asynchronous operations. Mainly, this means that the firmware is capable of polling the sticks and buttons at different frequencies, further improving input consistency for button inputs.
+Like the PhobGCC, the NaxGCC uses hall effect sensors instead of potentiometers for stick input. Additionally, it connects directly to the console via USB, by pretending to be a GCC adapter with 1 controller (itself) connected. This eliminates one additional layer of polling, and thus reduces perceived latency and improves input consistency. The NaxGCC firmware makes use of the [embassy-rs](https://github.com/embassy-rs/embassy) framework for asynchronous operations. Mainly, this means that the firmware is capable of polling the sticks and buttons at different frequencies, further improving input consistency and latency for button inputs.
 
 ## What's the deal with polling?
 
@@ -24,7 +24,7 @@ In plain English, with a game running at 60fps and USB polling at 8ms, you have 
 
 Now this sounds kind of bad at first, but keep in mind that for the first few milliseconds before and after this "golden" window, the likelihood is still very high ($\geq 75\%$) that your input will arrive at the frame you intended it for, so in total you will have a $\approx 12.66$ ms window where your inputs can reasonably be assumed to arrive at the frame you intended (sampling a random point from this 12.66ms window has a chance of $\gt 92\%$ of landing on the correct frame).
 
-In reality, there will still be a little bit of RNG, and you won't be able to eliminate it fully, at least not with 8ms polling, which unfortunately is a limitation on the console side, but more than half a frame of guaranteed input integrity, and ~12.66ms of "reasonable" input integrity is something that I, as a competitor, can live with.
+In reality, there will still be a little bit of RNG, and you won't be able to eliminate it fully, at least not with 8ms polling, which unfortunately is a limitation on the console side, but more than half a frame of guaranteed input integrity, and ~12.66ms of "reasonable" input integrity is something that I, as a competitor, _could_ live with, if I had to. (spoiler alert: I don't have to!)
 
 However, it's not that simple...
 
@@ -45,3 +45,11 @@ This is how it is when you're playing with a PhobGCC (the best GCC currently ava
 ### The Solution
 
 Since the NaxGCC connects directly to the console and eliminates the joybus protocol entirely, there is no second polling rate. The scan rate of the NaxGCC's sticks is 1ms, and the buttons are scanned as quickly as the MCU allows (I've measured ~50s on average, worst outliers being ~100us). While not quite reaching the ~8.66ms window length, the sticks have a ~7.66ms window of guaranteed input integrity, and the buttons are getting fairly close to ~8.56ms at worst (more than half a frame).
+
+This isn't the end of it though. NaxGCC connecting directly to the console brings another advantage with it, namely we can "trick" the console into sampling the controller at a different interval, one that works to our advantage. We can actually pretend to be a "laggy" USB device, by artificially introducing a variable delay in order to ensure the controller actually sends its button state to the console every 8.33ms instead of every 8ms. Why 8.33? Because 8.33 is a multiple of 16.66 (the game's frame draw time), meaning the controller will be polled equally as often as the game updates. This ensures that if you press and release a button 100ms apart, it will _always_ translate to 6 frames in-game (with polling at 8ms, there is a very high chance of it registering as 5 or 7 frames instead!).
+
+### The Experiment
+
+So, what real-world impact does this have? I created a test in which I have the NaxGCC press and release a button, both in 100ms intervals. Meaning the game should register 6 frames held, 6 frames released, 6 frames held, and so on. I used the [training mode modpack](https://github.com/jugeeya/UltimateTrainingModpack) to measure the exact number of frames the game actually recognizes the button as held / released. I let this test run for 10 minutes and recorded it to a video, then used a python script to go through every 6th frame and record what the game actually registered using optical character recognition.
+
+When in "OG controller" mode, the inputs were about ~75.25% accurate, meaning over 24% of the time, the game registered 5 or 7 frames held/released when it should have been 6. In "input consistency" mode, the accuracy was at ~98.62%! So, with a NaxGCC, not only do you get the lowest latency possible, since you're eliminating any sort of middleware in form of an adapter, but you also get the highest input integrity possible.
