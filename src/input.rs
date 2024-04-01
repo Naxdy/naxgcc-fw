@@ -21,8 +21,8 @@ use libm::{fmaxf, fminf};
 
 use crate::{
     config::{
-        ControllerConfig, OverrideGcReportInstruction, OverrideStickState, SIGNAL_IS_CALIBRATING,
-        SIGNAL_OVERRIDE_GCC_STATE, SIGNAL_OVERRIDE_STICK_STATE,
+        ControllerConfig, OverrideGcReportInstruction, OverrideStickState, SIGNAL_CONFIG_CHANGE,
+        SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE, SIGNAL_OVERRIDE_STICK_STATE,
     },
     filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
     gcc_hid::GcReport,
@@ -506,9 +506,10 @@ pub async fn update_stick_states_task(
     *SPI_ACS_SHARED.lock().await = Some(spi_acs);
     *SPI_CCS_SHARED.lock().await = Some(spi_ccs);
 
-    let controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
-    let cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
-    let filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
+    let mut controller_config = controller_config;
+    let mut controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
+    let mut cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
+    let mut filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
 
     info!("Controlstick params: {:?}", controlstick_params);
 
@@ -570,6 +571,13 @@ pub async fn update_stick_states_task(
         // not run at the desired interval
         if is_calibrating {
             yield_now().await;
+        }
+
+        if let Some(new_config) = SIGNAL_CONFIG_CHANGE.try_take() {
+            controller_config = new_config;
+            controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
+            cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
+            filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
         }
 
         #[cfg(debug_assertions)]

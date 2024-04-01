@@ -1,11 +1,67 @@
-use core::ops::Deref;
+use core::ops::{Add, AddAssign, Deref, Sub, SubAssign};
 use defmt::Format;
 use packed_struct::PackedStruct;
 
 /// wrapper type because packed_struct doesn't implement float
 /// packing by default
 #[derive(Debug, Format, Clone, Default, Copy)]
-pub struct PackedFloat(f32);
+pub struct PackedFloat(pub f32);
+
+impl Add for PackedFloat {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl Add<f32> for PackedFloat {
+    type Output = Self;
+
+    fn add(self, rhs: f32) -> Self::Output {
+        Self(self.0 + rhs)
+    }
+}
+
+impl Sub for PackedFloat {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl Sub<f32> for PackedFloat {
+    type Output = Self;
+
+    fn sub(self, rhs: f32) -> Self::Output {
+        Self(self.0 - rhs)
+    }
+}
+
+impl SubAssign for PackedFloat {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl SubAssign<f32> for PackedFloat {
+    fn sub_assign(&mut self, rhs: f32) {
+        self.0 -= rhs;
+    }
+}
+
+impl AddAssign for PackedFloat {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
+    }
+}
+
+impl AddAssign<f32> for PackedFloat {
+    fn add_assign(&mut self, rhs: f32) {
+        self.0 += rhs;
+    }
+}
 
 pub trait ToRegularArray<const T: usize> {
     fn to_regular_array(&self) -> &[f32; T];

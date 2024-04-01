@@ -5,6 +5,7 @@
 use core::{cmp::min, f32::consts::PI};
 
 use defmt::{debug, error, info, warn, Format};
+use embassy_futures::yield_now;
 use embassy_rp::{
     flash::{Async, Flash, ERASE_SIZE},
     peripherals::FLASH,
@@ -12,7 +13,7 @@ use embassy_rp::{
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
 use crate::{
-    helpers::{PackedFloat, ToPackedFloatArray, XyValuePair},
+    helpers::{PackedFloat, ToPackedFloatArray, ToRegularArray, XyValuePair},
     input::{
         read_ext_adc, Stick, StickAxis, StickState, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED,
         SPI_SHARED,
@@ -37,6 +38,9 @@ use crate::{gcc_hid::GcReport, input::CHANNEL_GCC_STATE};
 /// Whether we are currently calibrating the sticks. Updates are dispatched when the status changes.
 /// Initial status is assumed to be false.
 pub static SIGNAL_IS_CALIBRATING: Signal<ThreadModeRawMutex, bool> = Signal::new();
+
+/// Config change signalled to the stick task.
+pub static SIGNAL_CONFIG_CHANGE: Signal<ThreadModeRawMutex, ControllerConfig> = Signal::new();
 
 /// Signal used to override the stick state in order to display desired stick positions during calibration.
 pub static SIGNAL_OVERRIDE_STICK_STATE: Signal<
@@ -74,7 +78,7 @@ const BUTTON_POLL_INTERVAL_MILLIS: u64 = 20;
 
 /// This needs to be incremented for ANY change to ControllerConfig
 /// else we risk loading uninitialized memory.
-pub const CONTROLLER_CONFIG_REVISION: u8 = 2;
+pub const CONTROLLER_CONFIG_REVISION: u8 = 1;
 
 pub const DEFAULT_NOTCH_STATUS: [NotchStatus; NO_OF_NOTCHES] = [
     NotchStatus::Cardinal,
@@ -458,30 +462,32 @@ impl<'a> StickCalibrationProcess<'a> {
         }
     }
 
-    fn adjust_notch(&mut self, notch_adjustment_type: NotchAdjustmentType) -> Option<(f32, f32)> {
+    fn adjust_notch(&mut self, notch_adjustment_type: NotchAdjustmentType) {
+        let stick_config = match self.which_stick {
+            Stick::ControlStick => &mut self.gcc_config.astick_config,
+            Stick::CStick => &mut self.gcc_config.cstick_config,
+        };
+
         let notch_idx =
             NOTCH_ADJUSTMENT_ORDER[self.calibration_step as usize - NO_OF_CALIBRATION_POINTS];
 
         if self.applied_calibration.cleaned_calibration.notch_status[notch_idx]
             == NotchStatus::TertInactive
-        {
-            return None;
-        }
+        {}
 
         // assumes a tick rate of 1ms
         match notch_adjustment_type {
             NotchAdjustmentType::Clockwise => {
-                self.applied_calibration.notch_angles[notch_idx] -= 0.000075;
+                stick_config.angles[notch_idx] -= 0.0075;
             }
             NotchAdjustmentType::CounterClockwise => {
-                self.applied_calibration.notch_angles[notch_idx] += 0.000075;
+                stick_config.angles[notch_idx] += 0.0075;
             }
             NotchAdjustmentType::Reset => {
-                self.applied_calibration.notch_angles[notch_idx] = DEFAULT_ANGLES[notch_idx];
+                stick_config.angles[notch_idx] =
+                    PackedFloat(self.applied_calibration.measured_notch_angles[notch_idx]);
             }
-            NotchAdjustmentType::None => {
-                return None;
-            }
+            NotchAdjustmentType::None => {}
         }
 
         match notch_adjustment_type {
@@ -492,7 +498,7 @@ impl<'a> StickCalibrationProcess<'a> {
                     CleanedCalibrationPoints::from_temp_calibration_points(
                         &self.cal_points.map(|e| e.x),
                         &self.cal_points.map(|e| e.y),
-                        &self.applied_calibration.notch_angles,
+                        &self.applied_calibration.measured_notch_angles,
                     );
 
                 let linearized_calibration =
@@ -512,15 +518,18 @@ impl<'a> StickCalibrationProcess<'a> {
                     notch_calibration.affine_coeffs;
                 self.applied_calibration.stick_params.boundary_angles =
                     notch_calibration.boundary_angles;
-            }
-            NotchAdjustmentType::None => return None,
-        }
 
-        Some(
-            match calc_stick_values(self.applied_calibration.measured_notch_angles[notch_idx]) {
-                (x, y) => (x + FLOAT_ORIGIN, y + FLOAT_ORIGIN),
-            },
-        )
+                stick_config.angles = *legalize_notches(
+                    self.calibration_step as usize,
+                    &self.applied_calibration.measured_notch_angles,
+                    &stick_config.angles.to_regular_array(),
+                )
+                .to_packed_float_array();
+
+                SIGNAL_CONFIG_CHANGE.signal(self.gcc_config.clone());
+            }
+            NotchAdjustmentType::None => {}
+        }
     }
 
     async fn calibration_advance(&mut self) -> bool {
@@ -593,7 +602,7 @@ impl<'a> StickCalibrationProcess<'a> {
                 stick_config.angles = *legalize_notches(
                     self.calibration_step as usize,
                     &self.applied_calibration.measured_notch_angles,
-                    &stick_config.angles.map(|e| *e),
+                    &stick_config.angles.to_regular_array(),
                 )
                 .to_packed_float_array();
 
@@ -609,6 +618,8 @@ impl<'a> StickCalibrationProcess<'a> {
         if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8 {
             stick_config.cal_points_x = self.cal_points.map(|p| p.x.into());
             stick_config.cal_points_y = self.cal_points.map(|p| p.y.into());
+
+            SIGNAL_CONFIG_CHANGE.signal(self.gcc_config.clone());
 
             info!("Finished calibrating stick {}", self.which_stick);
 
@@ -687,7 +698,7 @@ impl<'a> StickCalibrationProcess<'a> {
                         AwaitableButtons::Y,
                     ]);
 
-                    let override_result = match btn_result {
+                    match btn_result {
                         Some(btn) => match btn {
                             AwaitableButtons::A => {
                                 debug!("Btn A release pressed");
@@ -705,18 +716,8 @@ impl<'a> StickCalibrationProcess<'a> {
                         None => self.adjust_notch(NotchAdjustmentType::None),
                     };
 
-                    if let Some((x, y)) = override_result {
-                        SIGNAL_OVERRIDE_STICK_STATE.signal(Some(OverrideStickState {
-                            x: x as u8,
-                            y: y as u8,
-                            which_stick: match self.which_stick {
-                                Stick::ControlStick => Stick::CStick,
-                                Stick::CStick => Stick::ControlStick,
-                            },
-                        }));
-                    }
-
                     ticker.next().await;
+                    yield_now().await;
                 }
             };
 
