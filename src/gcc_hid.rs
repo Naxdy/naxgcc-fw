@@ -279,11 +279,11 @@ pub async fn usb_transfer_task(
     usb_config.manufacturer = Some("Naxdy");
     usb_config.product = Some("NaxGCC");
     usb_config.serial_number = Some(serial);
-    usb_config.max_power = 10;
+    usb_config.max_power = 200;
     usb_config.max_packet_size_0 = 64;
     usb_config.device_class = 0;
     usb_config.device_protocol = 0;
-    usb_config.self_powered = true;
+    usb_config.self_powered = false;
     usb_config.device_sub_class = 0;
     usb_config.supports_remote_wakeup = true;
 
