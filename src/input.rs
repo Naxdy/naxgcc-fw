@@ -494,6 +494,7 @@ pub async fn update_button_state_task(
 ///
 /// Has to run on core0 because it makes use of SPI0.
 #[embassy_executor::task]
+#[link_section = ".time_critical.update_stick_states_task"]
 pub async fn update_stick_states_task(
     spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
     spi_acs: Output<'static, AnyPin>,
@@ -554,7 +555,7 @@ pub async fn update_stick_states_task(
         match Instant::now() {
             n => {
                 match (n - last_loop_time).as_micros() {
-                    a if a > 19999 => debug!("Loop took {} us", a),
+                    a if a > 1999 => debug!("Loop took {} us", a),
                     _ => {}
                 };
                 last_loop_time = n;

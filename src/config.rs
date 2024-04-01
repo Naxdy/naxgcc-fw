@@ -19,7 +19,7 @@ use crate::{
     },
     stick::{
         calc_stick_values, legalize_notches, AppliedCalibration, NotchStatus, CALIBRATION_ORDER,
-        NOTCH_ADJUSTMENT_ORDER, NO_OF_ADJ_NOTCHES, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES,
+        NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES,
     },
     ADDR_OFFSET, FLASH_SIZE,
 };
@@ -484,32 +484,6 @@ impl<'a> StickCalibrationProcess<'a> {
         }
 
         if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 {
-            let mut notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
-                self.calibration_step - NO_OF_CALIBRATION_POINTS as u8,
-                NO_OF_ADJ_NOTCHES as u8 - 1,
-            ) as usize];
-
-            while self.applied_calibration.cleaned_calibration.notch_status[notch_idx]
-                == NotchStatus::TertInactive
-                && self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8
-            {
-                stick_config.angles = *legalize_notches(
-                    self.calibration_step as usize,
-                    &self.applied_calibration.measured_notch_angles,
-                    &stick_config.angles.map(|e| *e),
-                )
-                .to_packed_float_array();
-
-                self.calibration_step += 1;
-
-                notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
-                    self.calibration_step - NO_OF_CALIBRATION_POINTS as u8,
-                    NO_OF_ADJ_NOTCHES as u8 - 1,
-                ) as usize];
-            }
-        }
-
-        if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8 {
             stick_config.cal_points_x = self.cal_points.map(|p| p.x.into());
             stick_config.cal_points_y = self.cal_points.map(|p| p.y.into());
 
@@ -528,30 +502,26 @@ impl<'a> StickCalibrationProcess<'a> {
         SIGNAL_IS_CALIBRATING.signal(true);
 
         while {
-            if self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 {
-                let (x, y) = get_stick_display_coords(self.calibration_step as usize);
-                debug!(
-                    "Raw display coords for step {}: {}, {}",
-                    self.calibration_step, x, y
-                );
-                SIGNAL_OVERRIDE_STICK_STATE.signal(Some(OverrideStickState {
-                    x: x as u8,
-                    y: y as u8,
-                    which_stick: match self.which_stick {
-                        Stick::ControlStick => Stick::CStick,
-                        Stick::CStick => Stick::ControlStick,
-                    },
-                }));
-            } else {
-                // TODO: phob calls `adjustNotch` here
-            }
+            let (x, y) = get_stick_display_coords(self.calibration_step as usize);
+            debug!(
+                "Raw display coords for step {}: {}, {}",
+                self.calibration_step, x, y
+            );
+            SIGNAL_OVERRIDE_STICK_STATE.signal(Some(OverrideStickState {
+                x: x as u8,
+                y: y as u8,
+                which_stick: match self.which_stick {
+                    Stick::ControlStick => Stick::CStick,
+                    Stick::CStick => Stick::ControlStick,
+                },
+            }));
 
             gcc_subscriber
                 .wait_for_button_release(&AwaitableButtons::A)
                 .await;
 
             // Prevent accidental double presses
-            Timer::after_millis(100).await;
+            Timer::after_millis(20).await;
 
             gcc_subscriber
                 .wait_for_button_press(&AwaitableButtons::A)
@@ -659,7 +629,7 @@ pub async fn config_task(
         });
 
         // Wait for the user to release the buttons
-        Timer::after_millis(500).await;
+        Timer::after_millis(1500).await;
 
         configuration_main_loop(&current_config, &mut flash, &mut gcc_subscriber).await;
 
