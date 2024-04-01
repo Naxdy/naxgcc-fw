@@ -360,7 +360,7 @@ pub async fn usb_transfer_task(
                     trace!("Report Written: {:08b}", report);
                     let currtime = Instant::now();
                     let polltime = currtime.duration_since(lasttime);
-                    debug!("Report written in {}us", polltime.as_micros());
+                    trace!("Report written in {}us", polltime.as_micros());
                     lasttime = currtime;
                 }
                 Err(e) => warn!("Failed to send report: {:?}", e),

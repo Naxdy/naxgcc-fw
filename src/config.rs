@@ -18,8 +18,9 @@ use crate::{
         SPI_SHARED,
     },
     stick::{
-        calc_stick_values, legalize_notches, AppliedCalibration, NotchStatus, CALIBRATION_ORDER,
-        NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES,
+        calc_stick_values, legalize_notches, AppliedCalibration, CleanedCalibrationPoints,
+        LinearizedCalibration, NotchCalibration, NotchStatus, CALIBRATION_ORDER,
+        NOTCH_ADJUSTMENT_ORDER, NO_OF_ADJ_NOTCHES, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES,
     },
     ADDR_OFFSET, FLASH_SIZE,
 };
@@ -29,7 +30,7 @@ use embassy_sync::{
     pubsub::{PubSubBehavior, Subscriber},
     signal::Signal,
 };
-use embassy_time::Timer;
+use embassy_time::{Duration, Ticker, Timer};
 
 use crate::{gcc_hid::GcReport, input::CHANNEL_GCC_STATE};
 
@@ -73,7 +74,7 @@ const BUTTON_POLL_INTERVAL_MILLIS: u64 = 20;
 
 /// This needs to be incremented for ANY change to ControllerConfig
 /// else we risk loading uninitialized memory.
-pub const CONTROLLER_CONFIG_REVISION: u8 = 1;
+pub const CONTROLLER_CONFIG_REVISION: u8 = 2;
 
 pub const DEFAULT_NOTCH_STATUS: [NotchStatus; NO_OF_NOTCHES] = [
     NotchStatus::Cardinal,
@@ -173,6 +174,14 @@ enum AwaitableButtons {
     Start,
     L,
     R,
+}
+
+#[derive(Clone, Copy, Debug, Format)]
+enum NotchAdjustmentType {
+    Clockwise,
+    CounterClockwise,
+    Reset,
+    None,
 }
 
 #[derive(Debug, Clone, Format, PackedStruct)]
@@ -300,6 +309,12 @@ trait WaitForButtonPress {
         buttons_to_wait_for: &[AwaitableButtons; N],
     ) -> AwaitableButtons;
 
+    /// See if one of the buttons in buttons_to_look_out_for is pressed, and return the pressed button, otherwise None.
+    fn filter_button_press_if_present<const N: usize>(
+        &mut self,
+        buttons_to_look_out_for: &[AwaitableButtons; N],
+    ) -> Option<AwaitableButtons>;
+
     /// Wait for multiple possible button combinations to be pressed simultaneously, and return the index of the combination that was pressed.
     async fn wait_and_filter_simultaneous_button_presses<const N: usize, const M: usize>(
         &mut self,
@@ -388,6 +403,23 @@ impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> WaitForBut
             Timer::after_millis(BUTTON_POLL_INTERVAL_MILLIS).await;
         }
     }
+
+    fn filter_button_press_if_present<const N: usize>(
+        &mut self,
+        buttons_to_look_out_for: &[AwaitableButtons; N],
+    ) -> Option<AwaitableButtons> {
+        let report = self.try_next_message_pure();
+
+        if let Some(report) = report {
+            for button in buttons_to_look_out_for {
+                if is_awaitable_button_pressed(&report, button) {
+                    return Some(*button);
+                }
+            }
+        }
+
+        return None;
+    }
 }
 
 fn is_awaitable_button_pressed(report: &GcReport, button_to_wait_for: &AwaitableButtons) -> bool {
@@ -424,6 +456,71 @@ impl<'a> StickCalibrationProcess<'a> {
             cal_points: [XyValuePair::default(); NO_OF_CALIBRATION_POINTS],
             applied_calibration: AppliedCalibration::default(),
         }
+    }
+
+    fn adjust_notch(&mut self, notch_adjustment_type: NotchAdjustmentType) -> Option<(f32, f32)> {
+        let notch_idx =
+            NOTCH_ADJUSTMENT_ORDER[self.calibration_step as usize - NO_OF_CALIBRATION_POINTS];
+
+        if self.applied_calibration.cleaned_calibration.notch_status[notch_idx]
+            == NotchStatus::TertInactive
+        {
+            return None;
+        }
+
+        // assumes a tick rate of 1ms
+        match notch_adjustment_type {
+            NotchAdjustmentType::Clockwise => {
+                self.applied_calibration.notch_angles[notch_idx] -= 0.000075;
+            }
+            NotchAdjustmentType::CounterClockwise => {
+                self.applied_calibration.notch_angles[notch_idx] += 0.000075;
+            }
+            NotchAdjustmentType::Reset => {
+                self.applied_calibration.notch_angles[notch_idx] = DEFAULT_ANGLES[notch_idx];
+            }
+            NotchAdjustmentType::None => {
+                return None;
+            }
+        }
+
+        match notch_adjustment_type {
+            NotchAdjustmentType::Clockwise
+            | NotchAdjustmentType::CounterClockwise
+            | NotchAdjustmentType::Reset => {
+                let cleaned_calibration_points =
+                    CleanedCalibrationPoints::from_temp_calibration_points(
+                        &self.cal_points.map(|e| e.x),
+                        &self.cal_points.map(|e| e.y),
+                        &self.applied_calibration.notch_angles,
+                    );
+
+                let linearized_calibration =
+                    LinearizedCalibration::from_calibration_points(&cleaned_calibration_points);
+
+                self.applied_calibration.stick_params.fit_coeffs = XyValuePair {
+                    x: linearized_calibration.fit_coeffs.x.map(|e| e as f32),
+                    y: linearized_calibration.fit_coeffs.y.map(|e| e as f32),
+                };
+
+                let notch_calibration = NotchCalibration::from_cleaned_and_linearized_calibration(
+                    &cleaned_calibration_points,
+                    &linearized_calibration,
+                );
+
+                self.applied_calibration.stick_params.affine_coeffs =
+                    notch_calibration.affine_coeffs;
+                self.applied_calibration.stick_params.boundary_angles =
+                    notch_calibration.boundary_angles;
+            }
+            NotchAdjustmentType::None => return None,
+        }
+
+        Some(
+            match calc_stick_values(self.applied_calibration.measured_notch_angles[notch_idx]) {
+                (x, y) => (x + FLOAT_ORIGIN, y + FLOAT_ORIGIN),
+            },
+        )
     }
 
     async fn calibration_advance(&mut self) -> bool {
@@ -484,6 +581,32 @@ impl<'a> StickCalibrationProcess<'a> {
         }
 
         if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 {
+            let mut notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
+                self.calibration_step - NO_OF_CALIBRATION_POINTS as u8,
+                NO_OF_ADJ_NOTCHES as u8 - 1,
+            ) as usize];
+
+            while self.applied_calibration.cleaned_calibration.notch_status[notch_idx]
+                == NotchStatus::TertInactive
+                && self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8
+            {
+                stick_config.angles = *legalize_notches(
+                    self.calibration_step as usize,
+                    &self.applied_calibration.measured_notch_angles,
+                    &stick_config.angles.map(|e| *e),
+                )
+                .to_packed_float_array();
+
+                self.calibration_step += 1;
+
+                notch_idx = NOTCH_ADJUSTMENT_ORDER[min(
+                    self.calibration_step - NO_OF_CALIBRATION_POINTS as u8,
+                    NO_OF_ADJ_NOTCHES as u8 - 1,
+                ) as usize];
+            }
+        }
+
+        if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8 {
             stick_config.cal_points_x = self.cal_points.map(|p| p.x.into());
             stick_config.cal_points_y = self.cal_points.map(|p| p.y.into());
 
@@ -502,30 +625,100 @@ impl<'a> StickCalibrationProcess<'a> {
         SIGNAL_IS_CALIBRATING.signal(true);
 
         while {
-            let (x, y) = get_stick_display_coords(self.calibration_step as usize);
-            debug!(
-                "Raw display coords for step {}: {}, {}",
-                self.calibration_step, x, y
-            );
-            SIGNAL_OVERRIDE_STICK_STATE.signal(Some(OverrideStickState {
-                x: x as u8,
-                y: y as u8,
-                which_stick: match self.which_stick {
-                    Stick::ControlStick => Stick::CStick,
-                    Stick::CStick => Stick::ControlStick,
-                },
-            }));
+            if self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 {
+                // Calibration phase
 
-            gcc_subscriber
-                .wait_for_button_release(&AwaitableButtons::A)
-                .await;
+                let (x, y) = get_stick_display_coords(self.calibration_step as usize);
+                debug!(
+                    "Raw display coords for step {}: {}, {}",
+                    self.calibration_step, x, y
+                );
 
-            // Prevent accidental double presses
-            Timer::after_millis(20).await;
+                SIGNAL_OVERRIDE_STICK_STATE.signal(Some(OverrideStickState {
+                    x: x as u8,
+                    y: y as u8,
+                    which_stick: match self.which_stick {
+                        Stick::ControlStick => Stick::CStick,
+                        Stick::CStick => Stick::ControlStick,
+                    },
+                }));
 
-            gcc_subscriber
-                .wait_for_button_press(&AwaitableButtons::A)
-                .await;
+                gcc_subscriber
+                    .wait_for_button_release(&AwaitableButtons::A)
+                    .await;
+
+                // Prevent accidental double presses
+                Timer::after_millis(100).await;
+
+                gcc_subscriber
+                    .wait_for_button_press(&AwaitableButtons::A)
+                    .await;
+            } else {
+                // Notch adjustment phase
+
+                gcc_subscriber
+                    .wait_for_button_release(&AwaitableButtons::A)
+                    .await;
+
+                Timer::after_millis(100).await;
+
+                let mut ticker = Ticker::every(Duration::from_millis(20));
+
+                let notch_idx = NOTCH_ADJUSTMENT_ORDER
+                    [self.calibration_step as usize - NO_OF_CALIBRATION_POINTS];
+
+                let (init_x, init_y) =
+                    calc_stick_values(self.applied_calibration.measured_notch_angles[notch_idx]);
+
+                SIGNAL_OVERRIDE_STICK_STATE.signal(Some(OverrideStickState {
+                    x: (init_x + FLOAT_ORIGIN) as u8,
+                    y: (init_y + FLOAT_ORIGIN) as u8,
+                    which_stick: match self.which_stick {
+                        Stick::ControlStick => Stick::CStick,
+                        Stick::CStick => Stick::ControlStick,
+                    },
+                }));
+
+                'adjust: loop {
+                    let btn_result = gcc_subscriber.filter_button_press_if_present(&[
+                        AwaitableButtons::A,
+                        AwaitableButtons::B,
+                        AwaitableButtons::X,
+                        AwaitableButtons::Y,
+                    ]);
+
+                    let override_result = match btn_result {
+                        Some(btn) => match btn {
+                            AwaitableButtons::A => {
+                                debug!("Btn A release pressed");
+                                break 'adjust;
+                            }
+                            AwaitableButtons::B => self.adjust_notch(NotchAdjustmentType::Reset),
+                            AwaitableButtons::X => {
+                                self.adjust_notch(NotchAdjustmentType::Clockwise)
+                            }
+                            AwaitableButtons::Y => {
+                                self.adjust_notch(NotchAdjustmentType::CounterClockwise)
+                            }
+                            _ => self.adjust_notch(NotchAdjustmentType::None),
+                        },
+                        None => self.adjust_notch(NotchAdjustmentType::None),
+                    };
+
+                    if let Some((x, y)) = override_result {
+                        SIGNAL_OVERRIDE_STICK_STATE.signal(Some(OverrideStickState {
+                            x: x as u8,
+                            y: y as u8,
+                            which_stick: match self.which_stick {
+                                Stick::ControlStick => Stick::CStick,
+                                Stick::CStick => Stick::ControlStick,
+                            },
+                        }));
+                    }
+
+                    ticker.next().await;
+                }
+            };
 
             !self.calibration_advance().await
         } {}

@@ -453,7 +453,7 @@ pub async fn update_button_state_task(
         }
 
         if let Some(override_stick_state_opt) = SIGNAL_OVERRIDE_STICK_STATE.try_take() {
-            debug!("Overridden stick state: {:?}", override_stick_state_opt);
+            trace!("Overridden stick state: {:?}", override_stick_state_opt);
             override_stick_state = override_stick_state_opt;
         }
 
@@ -565,6 +565,12 @@ pub async fn update_stick_states_task(
         SIGNAL_STICK_STATE.signal(current_stick_state.clone());
 
         ticker.next().await;
+
+        // we need this because during calibration, we might
+        // not run at the desired interval
+        if is_calibrating {
+            yield_now().await;
+        }
 
         #[cfg(debug_assertions)]
         {

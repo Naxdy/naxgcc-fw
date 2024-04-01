@@ -232,7 +232,7 @@ impl CleanedCalibrationPoints {
 }
 
 #[derive(Clone, Debug, Default)]
-struct LinearizedCalibration {
+pub struct LinearizedCalibration {
     pub fit_coeffs: XyValuePair<[f64; NUM_COEFFS]>,
 
     pub linearized_points: XyValuePair<[f32; NO_OF_NOTCHES + 1]>,
@@ -313,13 +313,13 @@ impl LinearizedCalibration {
 }
 
 #[derive(Clone, Debug, Default)]
-struct NotchCalibration {
-    affine_coeffs: [[f32; 4]; 16],
-    boundary_angles: [f32; 16],
+pub struct NotchCalibration {
+    pub affine_coeffs: [[f32; 4]; 16],
+    pub boundary_angles: [f32; 16],
 }
 
 impl NotchCalibration {
-    fn from_cleaned_and_linearized_calibration(
+    pub fn from_cleaned_and_linearized_calibration(
         cleaned_calibration_points: &CleanedCalibrationPoints,
         linearized_calibration: &LinearizedCalibration,
     ) -> Self {
