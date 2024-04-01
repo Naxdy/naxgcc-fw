@@ -225,8 +225,12 @@ impl Default for StickConfig {
 pub struct ControllerConfig {
     #[packed_field(size_bits = "8")]
     pub config_revision: u8,
+    /// Toggle for input consistency mode. If true, the controller
+    /// will trick the Switch into updating the state every 8.33ms
+    /// instead of every 8ms. The tradeoff is a slight increase in
+    /// input lag.
     #[packed_field(size_bits = "8")]
-    pub config_version: u8,
+    pub input_consistency_mode: bool,
     #[packed_field(size_bytes = "328")]
     pub astick_config: StickConfig,
     #[packed_field(size_bytes = "328")]
@@ -237,7 +241,7 @@ impl Default for ControllerConfig {
     fn default() -> Self {
         Self {
             config_revision: CONTROLLER_CONFIG_REVISION,
-            config_version: 0,
+            input_consistency_mode: true,
             astick_config: StickConfig::default(),
             cstick_config: StickConfig::default(),
         }

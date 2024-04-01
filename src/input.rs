@@ -21,8 +21,8 @@ use libm::{fmaxf, fminf};
 
 use crate::{
     config::{
-        ControllerConfig, OverrideStickState, SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE,
-        SIGNAL_OVERRIDE_STICK_STATE,
+        ControllerConfig, OverrideGcReportInstruction, OverrideStickState, SIGNAL_IS_CALIBRATING,
+        SIGNAL_OVERRIDE_GCC_STATE, SIGNAL_OVERRIDE_STICK_STATE,
     },
     filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
     gcc_hid::GcReport,
@@ -379,6 +379,24 @@ fn update_button_states<
     gcc_state.buttons_1.dpad_down = btn_ddown.is_low();
 }
 
+#[embassy_executor::task]
+pub async fn input_integrity_benchmark() {
+    loop {
+        SIGNAL_OVERRIDE_GCC_STATE.signal(OverrideGcReportInstruction {
+            report: {
+                let mut report = GcReport::default();
+                report.buttons_1.dpad_up = true;
+                report.cstick_x = 0;
+                report.cstick_y = 0;
+                report
+            },
+            duration_ms: 100,
+        });
+
+        Timer::after_millis(200).await;
+    }
+}
+
 /// Task responsible for updating the button states.
 /// Publishes the result to CHANNEL_GCC_STATE.
 #[embassy_executor::task]
@@ -404,12 +422,6 @@ pub async fn update_button_state_task(
     }
 
     let mut gcc_state = GcReport::default();
-
-    // Set the stick states to the center
-    gcc_state.stick_x = 127;
-    gcc_state.stick_y = 127;
-    gcc_state.cstick_x = 127;
-    gcc_state.cstick_y = 127;
 
     let gcc_publisher = CHANNEL_GCC_STATE.publisher().unwrap();
 
@@ -447,8 +459,12 @@ pub async fn update_button_state_task(
 
         // check for a gcc state override (usually coming from the config task)
         if let Some(override_gcc_state) = SIGNAL_OVERRIDE_GCC_STATE.try_take() {
-            gcc_publisher.publish_immediate(override_gcc_state.report);
-            Timer::after_millis(override_gcc_state.duration_ms).await;
+            trace!("Overridden gcc state: {:?}", override_gcc_state.report);
+            let end_time = Instant::now() + Duration::from_millis(override_gcc_state.duration_ms);
+            while Instant::now() < end_time {
+                gcc_publisher.publish_immediate(override_gcc_state.report);
+                yield_now().await;
+            }
         };
 
         if let Some(override_state) = &override_stick_state {

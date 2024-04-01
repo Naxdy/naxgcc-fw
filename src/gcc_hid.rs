@@ -8,7 +8,7 @@ use defmt::{debug, info, trace, warn, Format};
 use embassy_futures::join::join;
 use embassy_rp::{peripherals::USB, usb::Driver};
 
-use embassy_time::Instant;
+use embassy_time::{Duration, Instant, Ticker};
 use embassy_usb::{
     class::hid::{HidReaderWriter, ReportId, RequestHandler, State},
     control::OutResponse,
@@ -111,7 +111,7 @@ pub struct Buttons2 {
     pub blank1: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, PackedStruct, Format)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PackedStruct, Format)]
 #[packed_struct(bit_numbering = "msb0", size_bytes = "8")]
 pub struct GcReport {
     #[packed_field(bits = "0..=7")]
@@ -130,6 +130,21 @@ pub struct GcReport {
     pub trigger_l: u8,
     #[packed_field(bits = "56..=63")]
     pub trigger_r: u8,
+}
+
+impl Default for GcReport {
+    fn default() -> Self {
+        Self {
+            buttons_1: Buttons1::default(),
+            buttons_2: Buttons2::default(),
+            stick_x: 127,
+            stick_y: 127,
+            cstick_x: 127,
+            cstick_y: 127,
+            trigger_l: 0,
+            trigger_r: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -234,7 +249,11 @@ impl Handler for MyDeviceHandler {
 }
 
 #[embassy_executor::task]
-pub async fn usb_transfer_task(driver: Driver<'static, USB>, raw_serial: [u8; 8]) {
+pub async fn usb_transfer_task(
+    driver: Driver<'static, USB>,
+    raw_serial: [u8; 8],
+    input_consistency_mode: bool,
+) {
     let mut serial_buffer = [0u8; 64];
 
     let serial = format_no_std::show(
@@ -294,7 +313,7 @@ pub async fn usb_transfer_task(driver: Driver<'static, USB>, raw_serial: [u8; 8]
     let hid_config = embassy_usb::class::hid::Config {
         report_descriptor: GCC_REPORT_DESCRIPTOR,
         request_handler: Some(&request_handler),
-        poll_ms: 8,
+        poll_ms: if input_consistency_mode { 4 } else { 8 },
         max_packet_size_in: 37,
         max_packet_size_out: 5,
     };
@@ -318,7 +337,22 @@ pub async fn usb_transfer_task(driver: Driver<'static, USB>, raw_serial: [u8; 8]
     let in_fut = async {
         let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
 
+        let mut ticker = Ticker::every(Duration::from_micros(8333));
+
         loop {
+            if input_consistency_mode {
+                // This is what we like to call a "hack".
+                // It forces reports to be sent every 8.33ms instead of every 8ms.
+                // 8.33ms is a multiple of the game's frame interval (16.66ms), so if we
+                // send a report every 8.33ms, it should (in theory) ensure (close to)
+                // 100% input accuracy.
+                //
+                // From the console's perspective, we are basically a laggy adapter, taking
+                // a minimum of 333 extra us to send a report every time it's polled, but it
+                // works to our advantage.
+                ticker.next().await;
+            }
+
             let state = gcc_subscriber.next_message_pure().await;
             let report = get_gcinput_hid_report(&state);
             match writer.write(&report).await {
@@ -326,7 +360,7 @@ pub async fn usb_transfer_task(driver: Driver<'static, USB>, raw_serial: [u8; 8]
                     trace!("Report Written: {:08b}", report);
                     let currtime = Instant::now();
                     let polltime = currtime.duration_since(lasttime);
-                    trace!("Report written in {}us", polltime.as_micros());
+                    debug!("Report written in {}us", polltime.as_micros());
                     lasttime = currtime;
                 }
                 Err(e) => warn!("Failed to send report: {:?}", e),

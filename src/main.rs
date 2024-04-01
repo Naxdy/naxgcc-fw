@@ -35,6 +35,8 @@ use gpio::{Level, Output};
 use input::{update_button_state_task, update_stick_states_task};
 use static_cell::StaticCell;
 
+use crate::input::input_integrity_benchmark;
+
 use {defmt_rtt as _, panic_probe as _};
 
 static mut CORE1_STACK: Stack<4096> = Stack::new();
@@ -86,7 +88,14 @@ fn main() -> ! {
         let executor1 = EXECUTOR1.init(Executor::new());
         debug!("Mana");
         executor1.run(|spawner| {
-            spawner.spawn(usb_transfer_task(driver, uid)).unwrap();
+            spawner
+                .spawn(usb_transfer_task(
+                    driver,
+                    uid,
+                    controller_config.input_consistency_mode,
+                ))
+                .unwrap();
+            // spawner.spawn(input_integrity_benchmark()).unwrap();
             spawner
                 .spawn(update_button_state_task(
                     Input::new(AnyPin::from(p.PIN_20), gpio::Pull::Up),
