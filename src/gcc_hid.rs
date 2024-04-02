@@ -366,7 +366,7 @@ pub async fn usb_transfer_task(
                     let currtime = Instant::now();
                     let polltime = currtime.duration_since(lasttime);
                     let micros = polltime.as_micros();
-                    debug!("Report written in {}us", micros);
+                    trace!("Report written in {}us", micros);
                     // If we're sending reports too fast, reset the ticker.
                     // This might happen right after plug-in, or after suspend.
                     if micros < 8150 {

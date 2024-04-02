@@ -32,7 +32,7 @@ use crate::{
 };
 
 /// Used to send the button state to the usb task and the calibration task
-pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcReport, 1, 3, 1> =
+pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcReport, 1, 4, 1> =
     PubSubChannel::new();
 
 /// Used to send the stick state from the stick task to the main input task
