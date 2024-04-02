@@ -353,11 +353,16 @@ pub async fn usb_transfer_task(
                 ticker.next().await;
             }
 
-            let state = gcc_subscriber.next_message_pure().await;
-            let report = get_gcinput_hid_report(&state);
-            match writer.write(&report).await {
-                Ok(()) => {
+            match writer
+                .write(&{
+                    let state = gcc_subscriber.next_message_pure().await;
+                    let report = get_gcinput_hid_report(&state);
                     trace!("Report Written: {:08b}", report);
+                    report
+                })
+                .await
+            {
+                Ok(()) => {
                     let currtime = Instant::now();
                     let polltime = currtime.duration_since(lasttime);
                     let micros = polltime.as_micros();
