@@ -35,6 +35,8 @@ use gpio::{Level, Output};
 use input::{update_button_state_task, update_stick_states_task};
 use static_cell::StaticCell;
 
+use crate::config::enter_config_mode_task;
+use crate::gcc_hid::rumble_task;
 use crate::input::input_integrity_benchmark;
 
 use {defmt_rtt as _, panic_probe as _};
@@ -84,6 +86,20 @@ fn main() -> ! {
     let spi_acs = Output::new(AnyPin::from(p_acs), Level::High); // active low
     let spi_ccs = Output::new(AnyPin::from(p_ccs), Level::High); // active low
 
+    let mut rumble_config: embassy_rp::pwm::Config = Default::default();
+    rumble_config.top = 255;
+    rumble_config.enable = true;
+    rumble_config.compare_b = 0;
+
+    let mut brake_config = rumble_config.clone();
+    brake_config.compare_b = 255;
+
+    let pwm_rumble = Pwm::new_output_b(p.PWM_CH4, p.PIN_25, rumble_config.clone());
+    let pwm_brake = Pwm::new_output_b(p.PWM_CH6, p.PIN_29, brake_config.clone());
+
+    pwm_rumble.set_counter(0);
+    pwm_brake.set_counter(255);
+
     spawn_core1(p.CORE1, unsafe { &mut CORE1_STACK }, move || {
         let executor1 = EXECUTOR1.init(Executor::new());
         debug!("Mana");
@@ -93,6 +109,14 @@ fn main() -> ! {
                     driver,
                     uid,
                     controller_config.input_consistency_mode,
+                ))
+                .unwrap();
+            spawner.spawn(enter_config_mode_task()).unwrap();
+            spawner
+                .spawn(rumble_task(
+                    controller_config.rumble_strength,
+                    pwm_rumble,
+                    pwm_brake,
                 ))
                 .unwrap();
             // spawner.spawn(input_integrity_benchmark()).unwrap();
@@ -129,17 +153,6 @@ fn main() -> ! {
     //         controller_config.clone(),
     //     ))
     //     .unwrap();
-
-    let mut pwm_config: embassy_rp::pwm::Config = Default::default();
-    pwm_config.top = 255;
-    pwm_config.enable = true;
-    pwm_config.compare_b = 255;
-
-    // let pwm_rumble = Pwm::new_output_b(p.PWM_CH4, p.PIN_25, pwm_config.clone());
-    // let pwm_brake = Pwm::new_output_b(p.PWM_CH6, p.PIN_29, pwm_config.clone());
-
-    // pwm_rumble.set_counter(0);
-    // pwm_brake.set_counter(255);
 
     let executor0 = EXECUTOR0.init(Executor::new());
     info!("Initialized.");

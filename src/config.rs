@@ -16,6 +16,7 @@ use embassy_rp::{
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
 use crate::{
+    gcc_hid::SIGNAL_CHANGE_RUMBLE_STRENGTH,
     helpers::{PackedFloat, ToPackedFloatArray, ToRegularArray, XyValuePair},
     input::{
         read_ext_adc, Stick, StickAxis, StickState, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED,
@@ -1548,7 +1549,7 @@ async fn configuration_main_loop<
                         })
                     .clamp(0, MAX_RUMBLE_STRENGTH) as u8;
 
-                    // TODO: fire a test rumble here
+                    SIGNAL_CHANGE_RUMBLE_STRENGTH.signal(*to_adjust);
 
                     override_gcc_state_and_wait(&OverrideGcReportInstruction {
                         report: match GcReport::default() {
@@ -1559,6 +1560,7 @@ async fn configuration_main_loop<
                                 a.buttons_2.button_l = true;
                                 a.buttons_1.button_x = true;
                                 a.buttons_1.button_a = true;
+                                a.buttons_2.button_z = true; // makes the controller rumble in smashscope
                                 a.stick_x = 127;
                                 a.stick_y = 127;
                                 a.cstick_x = 127;

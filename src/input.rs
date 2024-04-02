@@ -499,14 +499,13 @@ pub async fn update_stick_states_task(
     spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
     spi_acs: Output<'static, AnyPin>,
     spi_ccs: Output<'static, AnyPin>,
-    controller_config: ControllerConfig,
+    mut controller_config: ControllerConfig,
 ) {
     Timer::after_secs(1).await;
     *SPI_SHARED.lock().await = Some(spi);
     *SPI_ACS_SHARED.lock().await = Some(spi_acs);
     *SPI_CCS_SHARED.lock().await = Some(spi_ccs);
 
-    let mut controller_config = controller_config;
     let mut controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
     let mut cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
     let mut filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);

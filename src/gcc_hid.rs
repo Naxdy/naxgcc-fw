@@ -6,17 +6,29 @@ use core::default::Default;
 
 use defmt::{debug, info, trace, warn, Format};
 use embassy_futures::join::join;
-use embassy_rp::{peripherals::USB, usb::Driver};
+use embassy_rp::{
+    peripherals::{PWM_CH4, PWM_CH6, USB},
+    pwm::Pwm,
+    usb::Driver,
+};
 
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, Ticker};
 use embassy_usb::{
     class::hid::{HidReaderWriter, ReportId, RequestHandler, State},
     control::OutResponse,
     Builder, Handler,
 };
+use libm::powf;
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
 use crate::input::CHANNEL_GCC_STATE;
+
+static SIGNAL_RUMBLE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
+/// We could turn the config change signal into a PubSubChannel instead, but that
+/// would just transmit unnecessary amounts of data.
+pub static SIGNAL_CHANGE_RUMBLE_STRENGTH: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 
 #[rustfmt::skip]
 pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
@@ -385,7 +397,8 @@ pub async fn usb_transfer_task(
             let mut buf = [0u8; 5];
             match reader.read(&mut buf).await {
                 Ok(_e) => {
-                    debug!("READ SOMETHIN: {:08b}", buf)
+                    debug!("READ SOMETHIN: {:08b}", buf);
+                    SIGNAL_RUMBLE.signal((buf[1] & 0x01) != 0);
                 }
                 Err(e) => {
                     warn!("Failed to read: {:?}", e);
@@ -400,4 +413,37 @@ pub async fn usb_transfer_task(
     };
 
     join(usb_fut_wrapped, join(in_fut, out_fut)).await;
+}
+
+fn calc_rumble_power(strength: u8) -> u16 {
+    if strength > 0 {
+        powf(2.0, 7.0 + ((strength as f32 - 3.0) / 8.0)) as u16
+    } else {
+        0
+    }
+}
+
+#[embassy_executor::task]
+pub async fn rumble_task(
+    strength: u8,
+    pwm_rumble: Pwm<'static, PWM_CH4>,
+    pwm_brake: Pwm<'static, PWM_CH6>,
+) {
+    let mut rumble_power = calc_rumble_power(strength);
+
+    loop {
+        let new_rumble_status = SIGNAL_RUMBLE.wait().await;
+
+        if let Some(new_strength) = SIGNAL_CHANGE_RUMBLE_STRENGTH.try_take() {
+            rumble_power = calc_rumble_power(new_strength);
+        }
+
+        if new_rumble_status {
+            pwm_rumble.set_counter(rumble_power);
+            pwm_brake.set_counter(0);
+        } else {
+            pwm_rumble.set_counter(0);
+            pwm_brake.set_counter(255);
+        }
+    }
 }
