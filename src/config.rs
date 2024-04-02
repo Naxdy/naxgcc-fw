@@ -574,19 +574,19 @@ impl<'a> StickCalibrationProcess<'a> {
         // TODO: phob does something related to undo here
 
         if self.calibration_step == NO_OF_CALIBRATION_POINTS as u8 {
-            stick_config.angles = *legalize_notches(
-                self.calibration_step as usize,
-                &self.applied_calibration.measured_notch_angles,
-                &self.applied_calibration.notch_angles,
-            )
-            .to_packed_float_array();
-
             self.applied_calibration = AppliedCalibration::from_points(
                 &self.cal_points.map(|e| e.x),
                 &self.cal_points.map(|e| e.y),
                 &stick_config,
                 self.which_stick,
             );
+
+            stick_config.angles = *legalize_notches(
+                self.calibration_step as usize,
+                &self.applied_calibration.measured_notch_angles,
+                &DEFAULT_ANGLES,
+            )
+            .to_packed_float_array();
         }
 
         if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 {
@@ -624,6 +624,10 @@ impl<'a> StickCalibrationProcess<'a> {
             info!("Finished calibrating stick {}", self.which_stick);
 
             return true;
+        }
+
+        if self.calibration_step == NO_OF_CALIBRATION_POINTS as u8 {
+            SIGNAL_CONFIG_CHANGE.signal(self.gcc_config.clone());
         }
 
         return false;
