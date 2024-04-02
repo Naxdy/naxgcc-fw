@@ -551,6 +551,10 @@ pub async fn update_stick_states_task(
 
         if let Some(new_calibrating) = SIGNAL_IS_CALIBRATING.try_take() {
             is_calibrating = new_calibrating;
+            if !is_calibrating {
+                debug!("Reset the ticker.");
+                ticker.reset();
+            }
         }
 
         match Instant::now() {
@@ -566,27 +570,13 @@ pub async fn update_stick_states_task(
         SIGNAL_STICK_STATE.signal(current_stick_state.clone());
 
         ticker.next().await;
-
-        // we need this because during calibration, we might
-        // not run at the desired interval
-        if is_calibrating {
-            yield_now().await;
-        }
+        yield_now().await;
 
         if let Some(new_config) = SIGNAL_CONFIG_CHANGE.try_take() {
             controller_config = new_config;
             controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
             cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
             filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
-        }
-
-        #[cfg(debug_assertions)]
-        {
-            // give other tasks a chance to do something
-            // in debug, this loop runs noticeably slower, so this is necessary
-            // prefer running with `cargo run --release` for this reason, when
-            // developing stick related features
-            yield_now().await;
         }
     }
 }
