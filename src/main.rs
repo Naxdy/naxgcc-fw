@@ -17,6 +17,7 @@ use defmt::{debug, info};
 use embassy_executor::Executor;
 use embassy_executor::InterruptExecutor;
 use embassy_futures::join::join;
+use embassy_rp::flash::Blocking;
 use embassy_rp::interrupt;
 use embassy_rp::interrupt::InterruptExt;
 use embassy_rp::{
@@ -29,6 +30,7 @@ use embassy_rp::{
     spi::{self, Spi},
     usb::{Driver, InterruptHandler},
 };
+use embassy_time::Instant;
 use gcc_hid::usb_transfer_task;
 use gpio::{Level, Output};
 
@@ -62,14 +64,9 @@ fn main() -> ! {
 
     // reading and writing from flash has to be done on the main thread, else funny things happen.
 
-    let mut flash = Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH0);
+    let flash = Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH0);
 
-    let mut uid = [0u8; 8];
-    flash.blocking_unique_id(&mut uid).unwrap();
-
-    let controller_config = ControllerConfig::from_flash_memory(&mut flash).unwrap();
-
-    debug!("Read unique id: {:02X}", uid);
+    let controller_config = ControllerConfig::default();
 
     let mosi = p.PIN_7;
     let miso = p.PIN_4;
@@ -107,7 +104,6 @@ fn main() -> ! {
             spawner
                 .spawn(usb_transfer_task(
                     driver,
-                    uid,
                     controller_config.input_consistency_mode,
                 ))
                 .unwrap();

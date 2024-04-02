@@ -261,11 +261,9 @@ impl Handler for MyDeviceHandler {
 }
 
 #[embassy_executor::task]
-pub async fn usb_transfer_task(
-    driver: Driver<'static, USB>,
-    raw_serial: [u8; 8],
-    input_consistency_mode: bool,
-) {
+pub async fn usb_transfer_task(driver: Driver<'static, USB>, input_consistency_mode: bool) {
+    let raw_serial = [0u8; 8];
+
     let mut serial_buffer = [0u8; 64];
 
     let serial = format_no_std::show(

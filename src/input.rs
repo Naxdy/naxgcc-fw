@@ -148,7 +148,7 @@ async fn update_stick_states(
     let mut cx_sum = 0u32;
     let mut cy_sum = 0u32;
 
-    let end_time = Instant::now() + Duration::from_micros(250); // this seems kinda magic, and it is, but
+    let end_time = Instant::now() + Duration::from_micros(200); // this seems kinda magic, and it is, but
 
     let mut spi_unlocked = SPI_SHARED.lock().await;
     let mut spi_acs_unlocked = SPI_ACS_SHARED.lock().await;
@@ -377,6 +377,14 @@ fn update_button_states<
     gcc_state.buttons_1.dpad_right = btn_dright.is_low();
     gcc_state.buttons_1.dpad_up = btn_dup.is_low();
     gcc_state.buttons_1.dpad_down = btn_ddown.is_low();
+    gcc_state.trigger_l = match gcc_state.buttons_2.button_l {
+        true => 255,
+        false => 0,
+    };
+    gcc_state.trigger_r = match gcc_state.buttons_2.button_r {
+        true => 255,
+        false => 0,
+    };
 }
 
 #[embassy_executor::task]
@@ -386,8 +394,6 @@ pub async fn input_integrity_benchmark() {
             report: {
                 let mut report = GcReport::default();
                 report.buttons_1.dpad_up = true;
-                report.cstick_x = 0;
-                report.cstick_y = 0;
                 report
             },
             duration_ms: 100,
@@ -501,7 +507,7 @@ pub async fn update_stick_states_task(
     spi_ccs: Output<'static, AnyPin>,
     mut controller_config: ControllerConfig,
 ) {
-    Timer::after_secs(1).await;
+    Timer::after_secs(5).await;
     *SPI_SHARED.lock().await = Some(spi);
     *SPI_ACS_SHARED.lock().await = Some(spi_acs);
     *SPI_CCS_SHARED.lock().await = Some(spi_ccs);
@@ -559,7 +565,7 @@ pub async fn update_stick_states_task(
         match Instant::now() {
             n => {
                 match (n - last_loop_time).as_micros() {
-                    a if a > 1999 => debug!("Loop took {} us", a),
+                    a if a > 1666 => debug!("Loop took {} us", a),
                     _ => {}
                 };
                 last_loop_time = n;

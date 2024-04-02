@@ -10,7 +10,7 @@ use core::{
 use defmt::{debug, error, info, warn, Format};
 use embassy_futures::yield_now;
 use embassy_rp::{
-    flash::{Async, Flash, ERASE_SIZE},
+    flash::{Async, Blocking, Flash, ERASE_SIZE},
     peripherals::FLASH,
 };
 use packed_struct::{derive::PackedStruct, PackedStruct};
@@ -476,7 +476,7 @@ enum NotchAdjustmentType {
 
 /// This needs to be incremented for ANY change to ControllerConfig
 /// else we risk loading uninitialized memory.
-pub const CONTROLLER_CONFIG_REVISION: u8 = 1;
+pub const CONTROLLER_CONFIG_REVISION: u8 = 21;
 
 #[derive(Debug, Clone, Format, PackedStruct)]
 #[packed_struct(endian = "msb")]
@@ -563,7 +563,15 @@ impl ControllerConfig {
         mut flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
     ) -> Result<Self, embassy_rp::flash::Error> {
         let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = [0u8; 659]; // ControllerConfig byte size
-        flash.blocking_read(ADDR_OFFSET, &mut controller_config_packed)?;
+
+        let r = flash.blocking_read(ADDR_OFFSET, &mut controller_config_packed);
+
+        if let Err(_) = r {
+            warn!("Controller config not found in flash, using default.");
+            controller_config_packed = [0u8; 659];
+        } else {
+            r.unwrap();
+        }
 
         match ControllerConfig::unpack(&controller_config_packed).unwrap() {
             a if a.config_revision == CONTROLLER_CONFIG_REVISION => {
@@ -1588,7 +1596,7 @@ async fn configuration_main_loop<
                                 a.buttons_1.button_x = true;
                                 a.buttons_1.button_a = true;
                                 a.stick_x = 127;
-                                a.stick_y = (127
+                                a.stick_y = (127 as i8
                                     + match final_config.input_consistency_mode {
                                         true => 69,
                                         false => -69,
@@ -1625,6 +1633,13 @@ pub async fn config_task(
     let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
 
     info!("Config task is running.");
+
+    Timer::after_millis(1000).await;
+
+    let new_config = ControllerConfig::from_flash_memory(&mut flash).unwrap();
+
+    SIGNAL_CHANGE_RUMBLE_STRENGTH.signal(new_config.rumble_strength);
+    SIGNAL_CONFIG_CHANGE.signal(new_config);
 
     loop {
         let desired_config_state = SIGNAL_CONFIG_MODE_STATUS_CHANGE.wait().await;
