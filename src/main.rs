@@ -9,6 +9,7 @@ mod filter;
 mod gcc_hid;
 mod helpers;
 mod input;
+mod input_filter;
 mod stick;
 
 use config::config_task;

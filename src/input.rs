@@ -22,6 +22,7 @@ use crate::{
     filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
     gcc_hid::GcReport,
     helpers::XyValuePair,
+    input_filter::{DummyFilter, InputFilter},
     stick::{linearize, notch_remap, StickParams},
 };
 
@@ -444,6 +445,9 @@ pub async fn update_button_state_task(
 
     let mut override_stick_state: Option<OverrideStickState> = None;
 
+    // replace this with the input filter of your choice, if you so desire.
+    let mut input_filter = DummyFilter;
+
     loop {
         update_button_states(
             &mut gcc_state,
@@ -498,6 +502,7 @@ pub async fn update_button_state_task(
             }
             gcc_publisher.publish_immediate(overriden_gcc_state);
         } else {
+            input_filter.apply_filter(&mut gcc_state);
             gcc_publisher.publish_immediate(gcc_state);
         }
 

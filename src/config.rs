@@ -445,7 +445,7 @@ pub struct OverrideStickState {
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Format)]
-enum AwaitableButtons {
+pub enum AwaitableButtons {
     A,
     B,
     X,
@@ -731,7 +731,10 @@ impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> WaitForBut
     }
 }
 
-fn is_awaitable_button_pressed(report: &GcReport, button_to_wait_for: &AwaitableButtons) -> bool {
+pub fn is_awaitable_button_pressed(
+    report: &GcReport,
+    button_to_wait_for: &AwaitableButtons,
+) -> bool {
     match button_to_wait_for {
         AwaitableButtons::A => report.buttons_1.button_a,
         AwaitableButtons::B => report.buttons_1.button_b,
