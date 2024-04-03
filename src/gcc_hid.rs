@@ -7,13 +7,13 @@ use core::default::Default;
 use defmt::{debug, info, trace, warn, Format};
 use embassy_futures::join::join;
 use embassy_rp::{
-    peripherals::{PWM_CH4, PWM_CH6, USB},
+    peripherals::{PIN_25, PIN_29, PWM_CH4, PWM_CH6, USB},
     pwm::Pwm,
     usb::Driver,
 };
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use embassy_time::{Duration, Instant, Ticker};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use embassy_usb::{
     class::hid::{HidReaderWriter, ReportId, RequestHandler, State},
     control::OutResponse,
@@ -430,7 +430,23 @@ fn calc_rumble_power(strength: u8) -> u16 {
 }
 
 #[embassy_executor::task]
-pub async fn rumble_task(pwm_rumble: Pwm<'static, PWM_CH4>, pwm_brake: Pwm<'static, PWM_CH6>) {
+pub async fn rumble_task(
+    pin_rumble: PIN_25,
+    pin_brake: PIN_29,
+    pwm_ch_rumble: PWM_CH4,
+    pwm_ch_brake: PWM_CH6,
+) {
+    let mut rumble_config: embassy_rp::pwm::Config = Default::default();
+    rumble_config.top = 0;
+    rumble_config.enable = true;
+    rumble_config.compare_b = 255;
+
+    let mut brake_config = rumble_config.clone();
+    brake_config.compare_b = 255;
+
+    let mut pwm_rumble = Pwm::new_output_b(pwm_ch_rumble, pin_rumble, rumble_config.clone());
+    let mut pwm_brake = Pwm::new_output_b(pwm_ch_brake, pin_brake, brake_config.clone());
+
     let mut rumble_power = {
         let strength = SIGNAL_CHANGE_RUMBLE_STRENGTH.wait().await;
         calc_rumble_power(strength)
@@ -439,16 +455,24 @@ pub async fn rumble_task(pwm_rumble: Pwm<'static, PWM_CH4>, pwm_brake: Pwm<'stat
     loop {
         let new_rumble_status = SIGNAL_RUMBLE.wait().await;
 
+        debug!("Received rumble signal: {}", new_rumble_status);
+
         if let Some(new_strength) = SIGNAL_CHANGE_RUMBLE_STRENGTH.try_take() {
             rumble_power = calc_rumble_power(new_strength);
         }
 
         if new_rumble_status {
-            pwm_rumble.set_counter(rumble_power);
-            pwm_brake.set_counter(0);
+            rumble_config.compare_b = rumble_power;
+            brake_config.compare_b = 0;
+
+            pwm_rumble.set_config(&rumble_config);
+            pwm_brake.set_config(&brake_config);
         } else {
-            pwm_rumble.set_counter(0);
-            pwm_brake.set_counter(255);
+            rumble_config.compare_b = 0;
+            brake_config.compare_b = 255;
+
+            pwm_rumble.set_config(&rumble_config);
+            pwm_brake.set_config(&brake_config);
         }
     }
 }

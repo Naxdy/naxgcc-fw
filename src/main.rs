@@ -83,24 +83,15 @@ fn main() -> ! {
     let spi_acs = Output::new(AnyPin::from(p_acs), Level::High); // active low
     let spi_ccs = Output::new(AnyPin::from(p_ccs), Level::High); // active low
 
-    let mut rumble_config: embassy_rp::pwm::Config = Default::default();
-    rumble_config.top = 255;
-    rumble_config.enable = true;
-    rumble_config.compare_b = 0;
-
-    let mut brake_config = rumble_config.clone();
-    brake_config.compare_b = 255;
-
-    let pwm_rumble = Pwm::new_output_b(p.PWM_CH4, p.PIN_25, rumble_config.clone());
-    let pwm_brake = Pwm::new_output_b(p.PWM_CH6, p.PIN_29, brake_config.clone());
-
     spawn_core1(p.CORE1, unsafe { &mut CORE1_STACK }, move || {
         let executor1 = EXECUTOR1.init(Executor::new());
         debug!("Mana");
         executor1.run(|spawner| {
             spawner.spawn(usb_transfer_task(uid, driver)).unwrap();
             spawner.spawn(enter_config_mode_task()).unwrap();
-            spawner.spawn(rumble_task(pwm_rumble, pwm_brake)).unwrap();
+            spawner
+                .spawn(rumble_task(p.PIN_25, p.PIN_29, p.PWM_CH4, p.PWM_CH6))
+                .unwrap();
             // spawner.spawn(input_integrity_benchmark()).unwrap();
             spawner
                 .spawn(update_button_state_task(
