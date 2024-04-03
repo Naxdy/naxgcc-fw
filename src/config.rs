@@ -554,7 +554,7 @@ impl ControllerConfig {
     pub fn from_flash_memory(
         mut flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
     ) -> Result<Self, embassy_rp::flash::Error> {
-        let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = [0u8; 659]; // ControllerConfig byte size
+        let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = ControllerConfig::default().pack().unwrap();
 
         let r = flash.blocking_read(ADDR_OFFSET, &mut controller_config_packed);
 
@@ -569,23 +569,21 @@ impl ControllerConfig {
             Ok(cfg) => match cfg {
                 a if a.config_revision == CONTROLLER_CONFIG_REVISION => {
                     info!("Controller config loaded from flash: {}", a);
-                    Ok(a)
+                    return Ok(a);
                 }
                 a => {
                     warn!("Outdated controller config detected ({:02X}), or controller config was never present, using default.", a.config_revision);
-                    let cfg = ControllerConfig::default();
-                    info!("Going to save default controller config.");
-                    cfg.write_to_flash(&mut flash)?;
-                    Ok(cfg)
                 }
             },
             Err(_) => {
-                let cfg = ControllerConfig::default();
-                info!("Going to save default controller config.");
-                cfg.write_to_flash(&mut flash)?;
-                Ok(cfg)
+                warn!("Controller config corrupted or flash uninitialized, using default.");
             }
-        }
+        };
+
+        let cfg = ControllerConfig::default();
+        info!("Going to save default controller config.");
+        cfg.write_to_flash(&mut flash)?;
+        Ok(cfg)
     }
 
     pub fn write_to_flash(
