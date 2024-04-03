@@ -64,9 +64,9 @@ fn main() -> ! {
 
     // reading and writing from flash has to be done on the main thread, else funny things happen.
 
-    let flash = Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH0);
-
-    let controller_config = ControllerConfig::default();
+    let mut flash = Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH0);
+    let mut uid = [0u8; 8];
+    flash.blocking_unique_id(&mut uid).unwrap();
 
     let mosi = p.PIN_7;
     let miso = p.PIN_4;
@@ -98,20 +98,9 @@ fn main() -> ! {
         let executor1 = EXECUTOR1.init(Executor::new());
         debug!("Mana");
         executor1.run(|spawner| {
-            spawner
-                .spawn(usb_transfer_task(
-                    driver,
-                    controller_config.input_consistency_mode,
-                ))
-                .unwrap();
+            spawner.spawn(usb_transfer_task(uid, driver)).unwrap();
             spawner.spawn(enter_config_mode_task()).unwrap();
-            spawner
-                .spawn(rumble_task(
-                    controller_config.rumble_strength,
-                    pwm_rumble,
-                    pwm_brake,
-                ))
-                .unwrap();
+            spawner.spawn(rumble_task(pwm_rumble, pwm_brake)).unwrap();
             // spawner.spawn(input_integrity_benchmark()).unwrap();
             spawner
                 .spawn(update_button_state_task(
@@ -152,17 +141,10 @@ fn main() -> ! {
 
     executor0.run(|spawner| {
         // Config task has to run on core0 because it reads and writes to flash.
-        spawner
-            .spawn(config_task(controller_config.clone(), flash))
-            .unwrap();
+        spawner.spawn(config_task(flash)).unwrap();
 
         spawner
-            .spawn(update_stick_states_task(
-                spi,
-                spi_acs,
-                spi_ccs,
-                controller_config,
-            ))
+            .spawn(update_stick_states_task(spi, spi_acs, spi_ccs))
             .unwrap();
     });
 }

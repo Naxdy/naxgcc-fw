@@ -30,6 +30,10 @@ static SIGNAL_RUMBLE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 /// would just transmit unnecessary amounts of data.
 pub static SIGNAL_CHANGE_RUMBLE_STRENGTH: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 
+/// Only dispatched ONCE after powerup, to determine how to advertise itself via USB.
+pub static SIGNAL_INPUT_CONSISTENCY_MODE_STATUS: Signal<CriticalSectionRawMutex, bool> =
+    Signal::new();
+
 #[rustfmt::skip]
 pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
     0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
@@ -261,8 +265,8 @@ impl Handler for MyDeviceHandler {
 }
 
 #[embassy_executor::task]
-pub async fn usb_transfer_task(driver: Driver<'static, USB>, input_consistency_mode: bool) {
-    let raw_serial = [0u8; 8];
+pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>) {
+    let input_consistency_mode = SIGNAL_INPUT_CONSISTENCY_MODE_STATUS.wait().await;
 
     let mut serial_buffer = [0u8; 64];
 
@@ -287,7 +291,11 @@ pub async fn usb_transfer_task(driver: Driver<'static, USB>, input_consistency_m
     trace!("Start of config");
     let mut usb_config = embassy_usb::Config::new(0x057e, 0x0337);
     usb_config.manufacturer = Some("Naxdy");
-    usb_config.product = Some("NaxGCC");
+    usb_config.product = Some(if input_consistency_mode {
+        "NaxGCC (Consistency Mode)"
+    } else {
+        "NaxGCC (OG Mode)"
+    });
     usb_config.serial_number = Some(serial);
     usb_config.max_power = 200;
     usb_config.max_packet_size_0 = 64;
@@ -422,12 +430,11 @@ fn calc_rumble_power(strength: u8) -> u16 {
 }
 
 #[embassy_executor::task]
-pub async fn rumble_task(
-    strength: u8,
-    pwm_rumble: Pwm<'static, PWM_CH4>,
-    pwm_brake: Pwm<'static, PWM_CH6>,
-) {
-    let mut rumble_power = calc_rumble_power(strength);
+pub async fn rumble_task(pwm_rumble: Pwm<'static, PWM_CH4>, pwm_brake: Pwm<'static, PWM_CH6>) {
+    let mut rumble_power = {
+        let strength = SIGNAL_CHANGE_RUMBLE_STRENGTH.wait().await;
+        calc_rumble_power(strength)
+    };
 
     loop {
         let new_rumble_status = SIGNAL_RUMBLE.wait().await;

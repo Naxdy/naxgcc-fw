@@ -16,7 +16,7 @@ use embassy_rp::{
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
 use crate::{
-    gcc_hid::SIGNAL_CHANGE_RUMBLE_STRENGTH,
+    gcc_hid::{SIGNAL_CHANGE_RUMBLE_STRENGTH, SIGNAL_INPUT_CONSISTENCY_MODE_STATUS},
     helpers::{PackedFloat, ToPackedFloatArray, ToRegularArray, XyValuePair},
     input::{
         read_ext_adc, Stick, StickAxis, StickState, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED,
@@ -568,13 +568,21 @@ impl ControllerConfig {
             r.unwrap();
         }
 
-        match ControllerConfig::unpack(&controller_config_packed).unwrap() {
-            a if a.config_revision == CONTROLLER_CONFIG_REVISION => {
-                info!("Controller config loaded from flash: {}", a);
-                Ok(a)
-            }
-            a => {
-                warn!("Outdated controller config detected ({:02X}), or controller config was never present, using default.", a.config_revision);
+        match ControllerConfig::unpack(&controller_config_packed) {
+            Ok(cfg) => match cfg {
+                a if a.config_revision == CONTROLLER_CONFIG_REVISION => {
+                    info!("Controller config loaded from flash: {}", a);
+                    Ok(a)
+                }
+                a => {
+                    warn!("Outdated controller config detected ({:02X}), or controller config was never present, using default.", a.config_revision);
+                    let cfg = ControllerConfig::default();
+                    info!("Going to save default controller config.");
+                    cfg.write_to_flash(&mut flash)?;
+                    Ok(cfg)
+                }
+            },
+            Err(_) => {
                 let cfg = ControllerConfig::default();
                 info!("Going to save default controller config.");
                 cfg.write_to_flash(&mut flash)?;
@@ -1063,7 +1071,7 @@ async fn configuration_main_loop<
     current_config: &ControllerConfig,
     mut flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
     gcc_subscriber: &mut Subscriber<'a, M, GcReport, C, S, P>,
-) {
+) -> ControllerConfig {
     let mut final_config = current_config.clone();
     let config_options = [
         EXIT_CONFIG_MODE_COMBO,
@@ -1618,23 +1626,28 @@ async fn configuration_main_loop<
     }
 
     info!("Exiting config main loop.");
+
+    final_config
 }
 
 #[embassy_executor::task]
-pub async fn config_task(
-    current_config: ControllerConfig,
-    mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>,
-) {
+pub async fn config_task(mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>) {
     let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
 
     info!("Config task is running.");
 
-    Timer::after_millis(100).await;
+    // We are loading the config from flash slightly deferred mainly because
+    // if a debug probe is connected, it could potentially interfere.
+    // This means we need to dispatch "updated" config status at least once to the
+    // other tasks.
 
-    let new_config = ControllerConfig::from_flash_memory(&mut flash).unwrap();
+    Timer::after_millis(10).await;
 
-    SIGNAL_CHANGE_RUMBLE_STRENGTH.signal(new_config.rumble_strength);
-    SIGNAL_CONFIG_CHANGE.signal(new_config);
+    let mut current_config = ControllerConfig::from_flash_memory(&mut flash).unwrap();
+
+    SIGNAL_INPUT_CONSISTENCY_MODE_STATUS.signal(current_config.input_consistency_mode);
+    SIGNAL_CHANGE_RUMBLE_STRENGTH.signal(current_config.rumble_strength);
+    SIGNAL_CONFIG_CHANGE.signal(current_config.clone());
 
     loop {
         let desired_config_state = SIGNAL_CONFIG_MODE_STATUS_CHANGE.wait().await;
@@ -1667,7 +1680,8 @@ pub async fn config_task(
         })
         .await;
 
-        configuration_main_loop(&current_config, &mut flash, &mut gcc_subscriber).await;
+        current_config =
+            configuration_main_loop(&current_config, &mut flash, &mut gcc_subscriber).await;
 
         info!("Exiting config mode.");
 
