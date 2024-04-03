@@ -12,25 +12,17 @@ mod input;
 mod stick;
 
 use config::config_task;
-use config::ControllerConfig;
 use defmt::{debug, info};
 use embassy_executor::Executor;
-use embassy_executor::InterruptExecutor;
-use embassy_futures::join::join;
-use embassy_rp::flash::Blocking;
-use embassy_rp::interrupt;
-use embassy_rp::interrupt::InterruptExt;
 use embassy_rp::{
     bind_interrupts,
     flash::{Async, Flash},
     gpio::{self, AnyPin, Input},
     multicore::{spawn_core1, Stack},
-    peripherals::{SPI0, USB},
-    pwm::Pwm,
+    peripherals::USB,
     spi::{self, Spi},
     usb::{Driver, InterruptHandler},
 };
-use embassy_time::Instant;
 use gcc_hid::usb_transfer_task;
 use gpio::{Level, Output};
 
@@ -39,7 +31,6 @@ use static_cell::StaticCell;
 
 use crate::config::enter_config_mode_task;
 use crate::gcc_hid::rumble_task;
-use crate::input::input_integrity_benchmark;
 
 use {defmt_rtt as _, panic_probe as _};
 

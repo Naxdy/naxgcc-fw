@@ -1,17 +1,12 @@
 use defmt::{debug, info, trace, Format};
-use embassy_futures::{join::join, yield_now};
+use embassy_futures::yield_now;
 use embassy_rp::{
-    flash::{Async, Flash},
     gpio::{AnyPin, Input, Output, Pin},
-    peripherals::{
-        FLASH, PIN_10, PIN_11, PIN_16, PIN_17, PIN_18, PIN_19, PIN_20, PIN_21, PIN_22, PIN_23,
-        PIN_24, PIN_5, PIN_8, PIN_9, PWM_CH4, PWM_CH6, SPI0, SPI1,
-    },
-    pwm::Pwm,
+    peripherals::SPI0,
     spi::{Blocking, Spi},
 };
 use embassy_sync::{
-    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex, ThreadModeRawMutex},
+    blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex},
     mutex::Mutex,
     pubsub::PubSubChannel,
     signal::Signal,
@@ -28,7 +23,6 @@ use crate::{
     gcc_hid::GcReport,
     helpers::XyValuePair,
     stick::{linearize, notch_remap, StickParams},
-    FLASH_SIZE,
 };
 
 /// Used to send the button state to the usb task and the calibration task

@@ -6,9 +6,8 @@ use defmt::{debug, info, trace, Format};
 use libm::{atan2f, cosf, fabs, fabsf, fmaxf, fminf, roundf, sinf, sqrtf};
 
 use crate::{
-    config::{ControllerConfig, StickConfig, DEFAULT_ANGLES, DEFAULT_NOTCH_STATUS},
+    config::{StickConfig, DEFAULT_ANGLES, DEFAULT_NOTCH_STATUS},
     helpers::{ToRegularArray, XyValuePair},
-    input::Stick,
 };
 
 /// fit order for the linearization
@@ -427,7 +426,6 @@ impl AppliedCalibration {
         cal_points_x: &[f32; NO_OF_CALIBRATION_POINTS],
         cal_points_y: &[f32; NO_OF_CALIBRATION_POINTS],
         stick_config: &StickConfig,
-        which_stick: Stick,
     ) -> Self {
         let mut stick_params = StickParams::from_stick_config(stick_config);
 

@@ -2,15 +2,12 @@
  *  Storage for controller configuration, including helper functions & types, as well as sane defaults.
  *  Also includes necessary logic for configuring the controller & calibrating the sticks.
  */
-use core::{
-    cmp::{max, min},
-    f32::consts::PI,
-};
+use core::{cmp::min, f32::consts::PI};
 
 use defmt::{debug, error, info, warn, Format};
 use embassy_futures::yield_now;
 use embassy_rp::{
-    flash::{Async, Blocking, Flash, ERASE_SIZE},
+    flash::{Async, Flash, ERASE_SIZE},
     peripherals::FLASH,
 };
 use packed_struct::{derive::PackedStruct, PackedStruct};
@@ -19,8 +16,7 @@ use crate::{
     gcc_hid::{SIGNAL_CHANGE_RUMBLE_STRENGTH, SIGNAL_INPUT_CONSISTENCY_MODE_STATUS},
     helpers::{PackedFloat, ToPackedFloatArray, ToRegularArray, XyValuePair},
     input::{
-        read_ext_adc, Stick, StickAxis, StickState, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED,
-        SPI_SHARED,
+        read_ext_adc, Stick, StickAxis, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED, SPI_SHARED,
     },
     stick::{
         calc_stick_values, legalize_notches, AppliedCalibration, CleanedCalibrationPoints,
@@ -32,7 +28,7 @@ use crate::{
 
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex, ThreadModeRawMutex},
-    pubsub::{PubSubBehavior, Subscriber},
+    pubsub::Subscriber,
     signal::Signal,
 };
 use embassy_time::{Duration, Ticker, Timer};
@@ -445,6 +441,7 @@ pub struct OverrideStickState {
     pub which_stick: Stick,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Format)]
 enum AwaitableButtons {
     A,
@@ -889,7 +886,6 @@ impl<'a> StickCalibrationProcess<'a> {
                 &self.cal_points.map(|e| e.x),
                 &self.cal_points.map(|e| e.y),
                 &stick_config,
-                self.which_stick,
             );
 
             stick_config.angles = *legalize_notches(
