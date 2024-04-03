@@ -437,9 +437,9 @@ pub async fn rumble_task(
     pwm_ch_brake: PWM_CH6,
 ) {
     let mut rumble_config: embassy_rp::pwm::Config = Default::default();
-    rumble_config.top = 0;
+    rumble_config.top = 255;
     rumble_config.enable = true;
-    rumble_config.compare_b = 255;
+    rumble_config.compare_b = 0;
 
     let mut brake_config = rumble_config.clone();
     brake_config.compare_b = 255;
