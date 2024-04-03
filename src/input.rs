@@ -185,6 +185,8 @@ async fn update_stick_states(
 
     trace!("Raw Control Stick: {}", raw_controlstick);
 
+    trace!("Raw CSTICK: {:?}", raw_cstick);
+
     raw_stick_values.a_raw = raw_controlstick;
     raw_stick_values.c_raw = raw_cstick;
 
@@ -252,7 +254,7 @@ async fn update_stick_states(
 
     // phob optionally runs a median filter here, but we leave it for now
 
-    trace!("Controlstick position: {}, {}", pos_x, pos_y);
+    trace!("Cstick position: {}, {}", pos_cx, pos_cy);
 
     let mut remapped = match notch_remap(
         pos_x,
@@ -291,7 +293,11 @@ async fn update_stick_states(
         (x, y) => XyValuePair { x, y },
     };
 
-    trace!("Remapped Control Stick: {}", remapped);
+    trace!(
+        "Remapped Control Stick: {}; C stick: {}",
+        remapped,
+        remapped_c
+    );
 
     remapped = XyValuePair {
         x: fminf(125., fmaxf(-125., remapped.x)),
@@ -507,7 +513,7 @@ pub async fn update_stick_states_task(
     spi_ccs: Output<'static, AnyPin>,
     mut controller_config: ControllerConfig,
 ) {
-    Timer::after_secs(5).await;
+    Timer::after_secs(1).await;
     *SPI_SHARED.lock().await = Some(spi);
     *SPI_ACS_SHARED.lock().await = Some(spi_acs);
     *SPI_CCS_SHARED.lock().await = Some(spi_ccs);
@@ -515,8 +521,6 @@ pub async fn update_stick_states_task(
     let mut controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
     let mut cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
     let mut filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
-
-    info!("Controlstick params: {:?}", controlstick_params);
 
     let mut current_stick_state = StickState {
         ax: 127,
@@ -582,6 +586,9 @@ pub async fn update_stick_states_task(
             controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
             cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
             filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
+
+            info!("Controlstick params: {:?}", controlstick_params);
+            info!("CStick params: {:?}", cstick_params);
         }
     }
 }

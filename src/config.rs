@@ -379,7 +379,6 @@ pub const DEFAULT_NOTCH_STATUS: [NotchStatus; NO_OF_NOTCHES] = [
     NotchStatus::TertActive,
 ];
 
-// new default cal points x
 #[rustfmt::skip]
 const DEFAULT_CAL_POINTS_X: [f32; NO_OF_CALIBRATION_POINTS] = [
     0.5279579,  0.37779236, // right
@@ -476,7 +475,7 @@ enum NotchAdjustmentType {
 
 /// This needs to be incremented for ANY change to ControllerConfig
 /// else we risk loading uninitialized memory.
-pub const CONTROLLER_CONFIG_REVISION: u8 = 21;
+pub const CONTROLLER_CONFIG_REVISION: u8 = 1;
 
 #[derive(Debug, Clone, Format, PackedStruct)]
 #[packed_struct(endian = "msb")]
@@ -492,7 +491,7 @@ pub struct StickConfig {
     #[packed_field(size_bits = "8")]
     pub y_snapback: i8, // not used for CStick
     #[packed_field(size_bits = "8")]
-    pub cardinal_snapping: i8, // not used for CStick
+    pub cardinal_snapping: i8,
     #[packed_field(size_bits = "8")]
     pub x_smoothing: u8,
     #[packed_field(size_bits = "8")]
@@ -549,11 +548,7 @@ impl Default for ControllerConfig {
             input_consistency_mode: true,
             astick_config: StickConfig::default(),
             rumble_strength: 9,
-            cstick_config: {
-                let mut cstick = StickConfig::default();
-                cstick.cardinal_snapping = 0;
-                cstick
-            },
+            cstick_config: StickConfig::default(),
         }
     }
 }
@@ -923,10 +918,10 @@ impl<'a> StickCalibrationProcess<'a> {
             }
         }
 
-        if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8 {
-            stick_config.cal_points_x = self.cal_points.map(|p| p.x.into());
-            stick_config.cal_points_y = self.cal_points.map(|p| p.y.into());
+        stick_config.cal_points_x = self.cal_points.map(|p| p.x.into());
+        stick_config.cal_points_y = self.cal_points.map(|p| p.y.into());
 
+        if self.calibration_step >= NO_OF_CALIBRATION_POINTS as u8 + NO_OF_ADJ_NOTCHES as u8 {
             SIGNAL_CONFIG_CHANGE.signal(self.gcc_config.clone());
 
             info!("Finished calibrating stick {}", self.which_stick);
@@ -1634,7 +1629,7 @@ pub async fn config_task(
 
     info!("Config task is running.");
 
-    Timer::after_millis(1000).await;
+    Timer::after_millis(100).await;
 
     let new_config = ControllerConfig::from_flash_memory(&mut flash).unwrap();
 

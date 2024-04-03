@@ -94,9 +94,6 @@ fn main() -> ! {
     let pwm_rumble = Pwm::new_output_b(p.PWM_CH4, p.PIN_25, rumble_config.clone());
     let pwm_brake = Pwm::new_output_b(p.PWM_CH6, p.PIN_29, brake_config.clone());
 
-    pwm_rumble.set_counter(0);
-    pwm_brake.set_counter(255);
-
     spawn_core1(p.CORE1, unsafe { &mut CORE1_STACK }, move || {
         let executor1 = EXECUTOR1.init(Executor::new());
         debug!("Mana");
