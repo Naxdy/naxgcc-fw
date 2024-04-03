@@ -13,7 +13,9 @@ use embassy_rp::{
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
 use crate::{
-    gcc_hid::{SIGNAL_CHANGE_RUMBLE_STRENGTH, SIGNAL_INPUT_CONSISTENCY_MODE_STATUS},
+    gcc_hid::{
+        Buttons1, Buttons2, SIGNAL_CHANGE_RUMBLE_STRENGTH, SIGNAL_INPUT_CONSISTENCY_MODE_STATUS,
+    },
     helpers::{PackedFloat, ToPackedFloatArray, ToRegularArray, XyValuePair},
     input::{
         read_ext_adc, Stick, StickAxis, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED, SPI_SHARED,
@@ -104,12 +106,12 @@ const LSTICK_SNAPBACK_X_INCREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::A,
     AwaitableButtons::X,
     AwaitableButtons::Up,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const LSTICK_SNAPBACK_Y_INCREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::A,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
     AwaitableButtons::Up,
     AwaitableButtons::Y,
 ];
@@ -118,14 +120,14 @@ const LSTICK_SNAPBACK_X_DECREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::A,
     AwaitableButtons::X,
     AwaitableButtons::Down,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const LSTICK_SNAPBACK_Y_DECREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::A,
     AwaitableButtons::Y,
     AwaitableButtons::Down,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const RSTICK_SNAPBACK_X_INCREASE_COMBO: [AwaitableButtons; 4] = [
@@ -159,28 +161,28 @@ const RSTICK_SNAPBACK_Y_DECREASE_COMBO: [AwaitableButtons; 4] = [
 const LSTICK_WAVESHAPING_X_INCREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::X,
     AwaitableButtons::Up,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
     AwaitableButtons::L,
 ];
 
 const LSTICK_WAVESHAPING_Y_INCREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::Y,
     AwaitableButtons::Up,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
     AwaitableButtons::L,
 ];
 
 const LSTICK_WAVESHAPING_X_DECREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::X,
     AwaitableButtons::Down,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
     AwaitableButtons::L,
 ];
 
 const LSTICK_WAVESHAPING_Y_DECREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::Y,
     AwaitableButtons::Down,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
     AwaitableButtons::L,
 ];
 
@@ -216,28 +218,28 @@ const LSTICK_SMOOTH_X_INCREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::R,
     AwaitableButtons::X,
     AwaitableButtons::Up,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const LSTICK_SMOOTH_Y_INCREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::R,
     AwaitableButtons::Y,
     AwaitableButtons::Up,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const LSTICK_SMOOTH_X_DECREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::R,
     AwaitableButtons::X,
     AwaitableButtons::Down,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const LSTICK_SMOOTH_Y_DECREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::R,
     AwaitableButtons::Y,
     AwaitableButtons::Down,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const RSTICK_SMOOTH_X_INCREASE_COMBO: [AwaitableButtons; 4] = [
@@ -272,14 +274,14 @@ const LSTICK_CARDINALSNAP_INCREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::R,
     AwaitableButtons::A,
     AwaitableButtons::Up,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const LSTICK_CARDINALSNAP_DECREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::R,
     AwaitableButtons::A,
     AwaitableButtons::Down,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const RSTICK_CARDINALSNAP_INCREASE_COMBO: [AwaitableButtons; 4] = [
@@ -300,14 +302,14 @@ const LSTICK_SCALING_INCREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::L,
     AwaitableButtons::A,
     AwaitableButtons::Up,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const LSTICK_SCALING_DECREASE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::L,
     AwaitableButtons::A,
     AwaitableButtons::Down,
-    AwaitableButtons::Wildcard,
+    AwaitableButtons::NotZ,
 ];
 
 const RSTICK_SCALING_INCREASE_COMBO: [AwaitableButtons; 4] = [
@@ -456,6 +458,8 @@ enum AwaitableButtons {
     L,
     R,
     Z,
+    // special, because Z is used for cstick calibration
+    NotZ,
     /// Used for padding arrays to the correct length.
     Wildcard,
     /// Used for disabling certain button combinations.\
@@ -552,17 +556,15 @@ impl Default for ControllerConfig {
 
 impl ControllerConfig {
     pub fn from_flash_memory(
-        mut flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
+        flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
     ) -> Result<Self, embassy_rp::flash::Error> {
         let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = ControllerConfig::default().pack().unwrap();
 
         let r = flash.blocking_read(ADDR_OFFSET, &mut controller_config_packed);
 
-        if let Err(_) = r {
+        if r.is_err() {
             warn!("Controller config not found in flash, using default.");
             controller_config_packed = [0u8; 659];
-        } else {
-            r.unwrap();
         }
 
         match ControllerConfig::unpack(&controller_config_packed) {
@@ -582,7 +584,7 @@ impl ControllerConfig {
 
         let cfg = ControllerConfig::default();
         info!("Going to save default controller config.");
-        cfg.write_to_flash(&mut flash)?;
+        cfg.write_to_flash(flash)?;
         Ok(cfg)
     }
 
@@ -725,7 +727,7 @@ impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> WaitForBut
             }
         }
 
-        return None;
+        None
     }
 }
 
@@ -745,6 +747,7 @@ fn is_awaitable_button_pressed(report: &GcReport, button_to_wait_for: &Awaitable
         AwaitableButtons::Z => report.buttons_2.button_z,
         AwaitableButtons::Wildcard => true,
         AwaitableButtons::Impossible => false,
+        AwaitableButtons::NotZ => !report.buttons_2.button_z,
     }
 }
 
@@ -779,7 +782,9 @@ impl<'a> StickCalibrationProcess<'a> {
 
         if self.applied_calibration.cleaned_calibration.notch_status[notch_idx]
             == NotchStatus::TertInactive
-        {}
+        {
+            return;
+        }
 
         // assumes a tick rate of 1ms
         match notch_adjustment_type {
@@ -828,7 +833,7 @@ impl<'a> StickCalibrationProcess<'a> {
                 stick_config.angles = *legalize_notches(
                     self.calibration_step as usize,
                     &self.applied_calibration.measured_notch_angles,
-                    &stick_config.angles.to_regular_array(),
+                    stick_config.angles.to_regular_array(),
                 )
                 .to_packed_float_array();
 
@@ -883,7 +888,7 @@ impl<'a> StickCalibrationProcess<'a> {
             self.applied_calibration = AppliedCalibration::from_points(
                 &self.cal_points.map(|e| e.x),
                 &self.cal_points.map(|e| e.y),
-                &stick_config,
+                stick_config,
             );
 
             stick_config.angles = *legalize_notches(
@@ -907,7 +912,7 @@ impl<'a> StickCalibrationProcess<'a> {
                 stick_config.angles = *legalize_notches(
                     self.calibration_step as usize,
                     &self.applied_calibration.measured_notch_angles,
-                    &stick_config.angles.to_regular_array(),
+                    stick_config.angles.to_regular_array(),
                 )
                 .to_packed_float_array();
 
@@ -935,7 +940,7 @@ impl<'a> StickCalibrationProcess<'a> {
             SIGNAL_CONFIG_CHANGE.signal(self.gcc_config.clone());
         }
 
-        return false;
+        false
     }
 
     pub async fn calibrate_stick(&mut self) {
@@ -1042,9 +1047,8 @@ fn get_stick_display_coords(current_step: usize) -> (f32, f32) {
     let idx = CALIBRATION_ORDER[current_step];
     if idx % 2 != 0 {
         let notch_idx = idx / 2;
-        match calc_stick_values(DEFAULT_ANGLES[notch_idx]) {
-            (x, y) => (x + FLOAT_ORIGIN, y + FLOAT_ORIGIN),
-        }
+        let (x, y) = calc_stick_values(DEFAULT_ANGLES[notch_idx]);
+        (x + FLOAT_ORIGIN, y + FLOAT_ORIGIN)
     } else {
         (127.5, 127.5)
     }
@@ -1063,7 +1067,7 @@ async fn configuration_main_loop<
     const P: usize,
 >(
     current_config: &ControllerConfig,
-    mut flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
+    flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
     gcc_subscriber: &mut Subscriber<'a, M, GcReport, C, S, P>,
 ) -> ControllerConfig {
     let mut final_config = current_config.clone();
@@ -1112,511 +1116,547 @@ async fn configuration_main_loop<
     ];
 
     'main: loop {
-        match gcc_subscriber
+        let selection = gcc_subscriber
             .wait_and_filter_simultaneous_button_presses(&config_options)
-            .await
-        {
-            selection => match selection {
-                // exit
-                0 => {
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_l = true;
-                                a.buttons_2.button_r = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_y = true;
-                                a.buttons_1.button_a = true;
-                                a.stick_x = 127;
-                                a.stick_y = 127;
-                                a.cstick_x = 127;
-                                a.cstick_y = 127;
-                                a
-                            }
+            .await;
+        match selection {
+            // exit
+            0 => {
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
                         },
-                        duration_ms: 1000,
-                    })
-                    .await;
-
-                    break 'main;
-                }
-                // calibrate lstick
-                1 => {
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_r = true;
-                                a.buttons_2.button_l = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_a = true;
-                                a.stick_x = 255;
-                                a.stick_y = 255;
-                                a.cstick_x = 127;
-                                a.cstick_y = 127;
-                                a
-                            }
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
                         },
-                        duration_ms: 1000,
-                    })
-                    .await;
-                    StickCalibrationProcess::new(&mut final_config, Stick::ControlStick)
-                        .calibrate_stick()
-                        .await;
-                }
-                // calibrate rstick
-                2 => {
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_r = true;
-                                a.buttons_2.button_l = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_a = true;
-                                a.stick_x = 127;
-                                a.stick_y = 127;
-                                a.cstick_x = 255;
-                                a.cstick_y = 255;
-                                a
-                            }
+                        stick_x: 127,
+                        stick_y: 127,
+                        cstick_x: 127,
+                        cstick_y: 127,
+                    },
+                    duration_ms: 1000,
+                })
+                .await;
+
+                break 'main;
+            }
+            // calibrate lstick
+            1 => {
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
                         },
-                        duration_ms: 1000,
-                    })
-                    .await;
-                    StickCalibrationProcess::new(&mut final_config, Stick::CStick)
-                        .calibrate_stick()
-                        .await;
-                }
-                // snapback changes
-                i if i >= 3 && i <= 10 => {
-                    let stick = match i {
-                        3 | 4 | 5 | 6 => Stick::ControlStick,
-                        7 | 8 | 9 | 10 => Stick::CStick,
-                        _ => unreachable!(),
-                    };
-
-                    let axis = match i {
-                        3 | 7 | 5 | 9 => StickAxis::XAxis,
-                        4 | 8 | 6 | 10 => StickAxis::YAxis,
-                        _ => unreachable!(),
-                    };
-
-                    let stick_config = match stick {
-                        Stick::ControlStick => &mut final_config.astick_config,
-                        Stick::CStick => &mut final_config.cstick_config,
-                    };
-
-                    let to_adjust = match axis {
-                        StickAxis::XAxis => &mut stick_config.x_snapback,
-                        StickAxis::YAxis => &mut stick_config.y_snapback,
-                    };
-
-                    *to_adjust = (*to_adjust
-                        + match i {
-                            3 | 7 | 4 | 8 => 1,
-                            5 | 9 | 6 | 10 => -1,
-                            _ => unreachable!(),
-                        })
-                    .clamp(-ABS_MAX_SNAPBACK, ABS_MAX_SNAPBACK);
-
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_r = true;
-                                a.buttons_2.button_l = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_a = true;
-                                a.stick_x = (127
-                                    + match stick {
-                                        Stick::ControlStick => match axis {
-                                            StickAxis::XAxis => *to_adjust,
-                                            StickAxis::YAxis => 0,
-                                        },
-                                        Stick::CStick => 0,
-                                    }) as u8;
-                                a.stick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => match axis {
-                                            StickAxis::XAxis => 0,
-                                            StickAxis::YAxis => *to_adjust,
-                                        },
-                                        Stick::CStick => 0,
-                                    }) as u8;
-                                a.cstick_x = (127
-                                    + match stick {
-                                        Stick::ControlStick => 0,
-                                        Stick::CStick => match axis {
-                                            StickAxis::XAxis => *to_adjust,
-                                            StickAxis::YAxis => 0,
-                                        },
-                                    }) as u8;
-                                a.cstick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => 0,
-                                        Stick::CStick => match axis {
-                                            StickAxis::XAxis => 0,
-                                            StickAxis::YAxis => *to_adjust,
-                                        },
-                                    }) as u8;
-                                a
-                            }
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
                         },
-                        duration_ms: 750,
-                    })
+                        stick_x: 255,
+                        stick_y: 255,
+                        cstick_x: 127,
+                        cstick_y: 127,
+                    },
+                    duration_ms: 1000,
+                })
+                .await;
+                StickCalibrationProcess::new(&mut final_config, Stick::ControlStick)
+                    .calibrate_stick()
                     .await;
-
-                    SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
-                }
-                // waveshaping changes
-                i if i >= 11 && i <= 18 => {
-                    let stick = match i {
-                        11 | 12 | 13 | 14 => Stick::ControlStick,
-                        15 | 16 | 17 | 18 => Stick::CStick,
-                        _ => unreachable!(),
-                    };
-
-                    let axis = match i {
-                        11 | 15 | 13 | 17 => StickAxis::XAxis,
-                        12 | 16 | 14 | 18 => StickAxis::YAxis,
-                        _ => unreachable!(),
-                    };
-
-                    let stick_config = match stick {
-                        Stick::ControlStick => &mut final_config.astick_config,
-                        Stick::CStick => &mut final_config.cstick_config,
-                    };
-
-                    let to_adjust = match axis {
-                        StickAxis::XAxis => &mut stick_config.x_waveshaping,
-                        StickAxis::YAxis => &mut stick_config.y_waveshaping,
-                    };
-
-                    *to_adjust = (*to_adjust as i8
-                        + match i {
-                            11 | 15 | 12 | 16 => 1,
-                            13 | 17 | 14 | 18 => -1,
-                            _ => unreachable!(),
-                        })
-                    .clamp(0, MAX_WAVESHAPING) as u8;
-
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_r = true;
-                                a.buttons_2.button_l = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_a = true;
-                                a.stick_x = (127
-                                    + match stick {
-                                        Stick::ControlStick => match axis {
-                                            StickAxis::XAxis => *to_adjust,
-                                            StickAxis::YAxis => 0,
-                                        },
-                                        Stick::CStick => 0,
-                                    }) as u8;
-                                a.stick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => match axis {
-                                            StickAxis::XAxis => 0,
-                                            StickAxis::YAxis => *to_adjust,
-                                        },
-                                        Stick::CStick => 0,
-                                    }) as u8;
-                                a.cstick_x = (127
-                                    + match stick {
-                                        Stick::ControlStick => 0,
-                                        Stick::CStick => match axis {
-                                            StickAxis::XAxis => *to_adjust,
-                                            StickAxis::YAxis => 0,
-                                        },
-                                    }) as u8;
-                                a.cstick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => 0,
-                                        Stick::CStick => match axis {
-                                            StickAxis::XAxis => 0,
-                                            StickAxis::YAxis => *to_adjust,
-                                        },
-                                    }) as u8;
-                                a
-                            }
+            }
+            // calibrate rstick
+            2 => {
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
                         },
-                        duration_ms: 750,
-                    })
-                    .await;
-
-                    SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
-                }
-                // smoothing changes
-                i if i >= 19 && i <= 26 => {
-                    let stick = match i {
-                        19 | 20 | 21 | 22 => Stick::ControlStick,
-                        23 | 24 | 25 | 26 => Stick::CStick,
-                        _ => unreachable!(),
-                    };
-
-                    let axis = match i {
-                        19 | 23 | 21 | 25 => StickAxis::XAxis,
-                        20 | 24 | 22 | 26 => StickAxis::YAxis,
-                        _ => unreachable!(),
-                    };
-
-                    let stick_config = match stick {
-                        Stick::ControlStick => &mut final_config.astick_config,
-                        Stick::CStick => &mut final_config.cstick_config,
-                    };
-
-                    let to_adjust = match axis {
-                        StickAxis::XAxis => &mut stick_config.x_smoothing,
-                        StickAxis::YAxis => &mut stick_config.y_smoothing,
-                    };
-
-                    *to_adjust = (*to_adjust as i8
-                        + match i {
-                            19 | 23 | 20 | 24 => 1,
-                            21 | 25 | 22 | 26 => -1,
-                            _ => unreachable!(),
-                        })
-                    .clamp(0, MAX_SMOOTHING) as u8;
-
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_r = true;
-                                a.buttons_2.button_l = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_a = true;
-                                a.stick_x = (127
-                                    + match stick {
-                                        Stick::ControlStick => match axis {
-                                            StickAxis::XAxis => *to_adjust,
-                                            StickAxis::YAxis => 0,
-                                        },
-                                        Stick::CStick => 0,
-                                    }) as u8;
-                                a.stick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => match axis {
-                                            StickAxis::XAxis => 0,
-                                            StickAxis::YAxis => *to_adjust,
-                                        },
-                                        Stick::CStick => 0,
-                                    }) as u8;
-                                a.cstick_x = (127
-                                    + match stick {
-                                        Stick::ControlStick => 0,
-                                        Stick::CStick => match axis {
-                                            StickAxis::XAxis => *to_adjust,
-                                            StickAxis::YAxis => 0,
-                                        },
-                                    }) as u8;
-                                a.cstick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => 0,
-                                        Stick::CStick => match axis {
-                                            StickAxis::XAxis => 0,
-                                            StickAxis::YAxis => *to_adjust,
-                                        },
-                                    }) as u8;
-                                a
-                            }
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
                         },
-                        duration_ms: 750,
-                    })
+                        stick_x: 127,
+                        stick_y: 127,
+                        cstick_x: 255,
+                        cstick_y: 255,
+                    },
+                    duration_ms: 1000,
+                })
+                .await;
+                StickCalibrationProcess::new(&mut final_config, Stick::CStick)
+                    .calibrate_stick()
                     .await;
+            }
+            // snapback changes
+            i if (3..=10).contains(&i) => {
+                let stick = match i {
+                    3..=6 => Stick::ControlStick,
+                    7..=10 => Stick::CStick,
+                    _ => unreachable!(),
+                };
 
-                    SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
-                }
-                // cardinalsnap increase/decrease
-                i if i >= 27 && i <= 30 => {
-                    let stick = match i {
-                        27 | 28 => Stick::ControlStick,
-                        29 | 30 => Stick::CStick,
+                let axis = match i {
+                    3 | 7 | 5 | 9 => StickAxis::XAxis,
+                    4 | 8 | 6 | 10 => StickAxis::YAxis,
+                    _ => unreachable!(),
+                };
+
+                let stick_config = match stick {
+                    Stick::ControlStick => &mut final_config.astick_config,
+                    Stick::CStick => &mut final_config.cstick_config,
+                };
+
+                let to_adjust = match axis {
+                    StickAxis::XAxis => &mut stick_config.x_snapback,
+                    StickAxis::YAxis => &mut stick_config.y_snapback,
+                };
+
+                *to_adjust = (*to_adjust
+                    + match i {
+                        3 | 7 | 4 | 8 => 1,
+                        5 | 9 | 6 | 10 => -1,
                         _ => unreachable!(),
-                    };
+                    })
+                .clamp(-ABS_MAX_SNAPBACK, ABS_MAX_SNAPBACK);
 
-                    let to_adjust = match i {
-                        27 | 29 => &mut final_config.astick_config.cardinal_snapping,
-                        28 | 30 => &mut final_config.cstick_config.cardinal_snapping,
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
+                        },
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
+                        },
+                        stick_x: (127
+                            + match stick {
+                                Stick::ControlStick => match axis {
+                                    StickAxis::XAxis => *to_adjust,
+                                    StickAxis::YAxis => 0,
+                                },
+                                Stick::CStick => 0,
+                            }) as u8,
+                        stick_y: (127
+                            + match stick {
+                                Stick::ControlStick => match axis {
+                                    StickAxis::XAxis => 0,
+                                    StickAxis::YAxis => *to_adjust,
+                                },
+                                Stick::CStick => 0,
+                            }) as u8,
+                        cstick_x: (127
+                            + match stick {
+                                Stick::ControlStick => 0,
+                                Stick::CStick => match axis {
+                                    StickAxis::XAxis => *to_adjust,
+                                    StickAxis::YAxis => 0,
+                                },
+                            }) as u8,
+                        cstick_y: (127
+                            + match stick {
+                                Stick::ControlStick => 0,
+                                Stick::CStick => match axis {
+                                    StickAxis::XAxis => 0,
+                                    StickAxis::YAxis => *to_adjust,
+                                },
+                            }) as u8,
+                    },
+                    duration_ms: 750,
+                })
+                .await;
+
+                SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
+            }
+            // waveshaping changes
+            i if (11..=18).contains(&i) => {
+                let stick = match i {
+                    11..=14 => Stick::ControlStick,
+                    15..=18 => Stick::CStick,
+                    _ => unreachable!(),
+                };
+
+                let axis = match i {
+                    11 | 15 | 13 | 17 => StickAxis::XAxis,
+                    12 | 16 | 14 | 18 => StickAxis::YAxis,
+                    _ => unreachable!(),
+                };
+
+                let stick_config = match stick {
+                    Stick::ControlStick => &mut final_config.astick_config,
+                    Stick::CStick => &mut final_config.cstick_config,
+                };
+
+                let to_adjust = match axis {
+                    StickAxis::XAxis => &mut stick_config.x_waveshaping,
+                    StickAxis::YAxis => &mut stick_config.y_waveshaping,
+                };
+
+                *to_adjust = (*to_adjust as i8
+                    + match i {
+                        11 | 15 | 12 | 16 => 1,
+                        13 | 17 | 14 | 18 => -1,
                         _ => unreachable!(),
-                    };
-
-                    *to_adjust = (*to_adjust
-                        + match i {
-                            27 | 29 => 1,
-                            28 | 30 => -1,
-                            _ => unreachable!(),
-                        })
-                    .clamp(-1, MAX_CARDINAL_SNAP);
-
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_r = true;
-                                a.buttons_2.button_l = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_a = true;
-                                a.stick_x = 127;
-                                a.stick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => *to_adjust,
-                                        Stick::CStick => 0,
-                                    }) as u8;
-                                a.cstick_x = 127;
-                                a.cstick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => 0,
-                                        Stick::CStick => *to_adjust,
-                                    }) as u8;
-                                a
-                            }
-                        },
-                        duration_ms: 750,
                     })
-                    .await;
+                .clamp(0, MAX_WAVESHAPING) as u8;
 
-                    SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
-                }
-                // scaling changes
-                i if i >= 31 && i <= 34 => {
-                    let stick = match i {
-                        31 | 32 => Stick::ControlStick,
-                        33 | 34 => Stick::CStick,
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
+                        },
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
+                        },
+                        stick_x: (127
+                            + match stick {
+                                Stick::ControlStick => match axis {
+                                    StickAxis::XAxis => *to_adjust,
+                                    StickAxis::YAxis => 0,
+                                },
+                                Stick::CStick => 0,
+                            }) as u8,
+                        stick_y: (127
+                            + match stick {
+                                Stick::ControlStick => match axis {
+                                    StickAxis::XAxis => 0,
+                                    StickAxis::YAxis => *to_adjust,
+                                },
+                                Stick::CStick => 0,
+                            }) as u8,
+                        cstick_x: (127
+                            + match stick {
+                                Stick::ControlStick => 0,
+                                Stick::CStick => match axis {
+                                    StickAxis::XAxis => *to_adjust,
+                                    StickAxis::YAxis => 0,
+                                },
+                            }) as u8,
+                        cstick_y: (127
+                            + match stick {
+                                Stick::ControlStick => 0,
+                                Stick::CStick => match axis {
+                                    StickAxis::XAxis => 0,
+                                    StickAxis::YAxis => *to_adjust,
+                                },
+                            }) as u8,
+                    },
+                    duration_ms: 750,
+                })
+                .await;
+
+                SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
+            }
+            // smoothing changes
+            i if (19..=26).contains(&i) => {
+                let stick = match i {
+                    19..=22 => Stick::ControlStick,
+                    23..=26 => Stick::CStick,
+                    _ => unreachable!(),
+                };
+
+                let axis = match i {
+                    19 | 23 | 21 | 25 => StickAxis::XAxis,
+                    20 | 24 | 22 | 26 => StickAxis::YAxis,
+                    _ => unreachable!(),
+                };
+
+                let stick_config = match stick {
+                    Stick::ControlStick => &mut final_config.astick_config,
+                    Stick::CStick => &mut final_config.cstick_config,
+                };
+
+                let to_adjust = match axis {
+                    StickAxis::XAxis => &mut stick_config.x_smoothing,
+                    StickAxis::YAxis => &mut stick_config.y_smoothing,
+                };
+
+                *to_adjust = (*to_adjust as i8
+                    + match i {
+                        19 | 23 | 20 | 24 => 1,
+                        21 | 25 | 22 | 26 => -1,
                         _ => unreachable!(),
-                    };
+                    })
+                .clamp(0, MAX_SMOOTHING) as u8;
 
-                    let to_adjust = match i {
-                        31 | 33 => &mut final_config.astick_config.analog_scaler,
-                        32 | 34 => &mut final_config.cstick_config.analog_scaler,
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
+                        },
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
+                        },
+                        stick_x: (127
+                            + match stick {
+                                Stick::ControlStick => match axis {
+                                    StickAxis::XAxis => *to_adjust,
+                                    StickAxis::YAxis => 0,
+                                },
+                                Stick::CStick => 0,
+                            }) as u8,
+                        stick_y: (127
+                            + match stick {
+                                Stick::ControlStick => match axis {
+                                    StickAxis::XAxis => 0,
+                                    StickAxis::YAxis => *to_adjust,
+                                },
+                                Stick::CStick => 0,
+                            }) as u8,
+                        cstick_x: (127
+                            + match stick {
+                                Stick::ControlStick => 0,
+                                Stick::CStick => match axis {
+                                    StickAxis::XAxis => *to_adjust,
+                                    StickAxis::YAxis => 0,
+                                },
+                            }) as u8,
+                        cstick_y: (127
+                            + match stick {
+                                Stick::ControlStick => 0,
+                                Stick::CStick => match axis {
+                                    StickAxis::XAxis => 0,
+                                    StickAxis::YAxis => *to_adjust,
+                                },
+                            }) as u8,
+                    },
+                    duration_ms: 750,
+                })
+                .await;
+
+                SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
+            }
+            // cardinalsnap increase/decrease
+            i if (27..=30).contains(&i) => {
+                let stick = match i {
+                    27 | 28 => Stick::ControlStick,
+                    29 | 30 => Stick::CStick,
+                    _ => unreachable!(),
+                };
+
+                let to_adjust = match stick {
+                    Stick::ControlStick => &mut final_config.astick_config.cardinal_snapping,
+                    Stick::CStick => &mut final_config.cstick_config.cardinal_snapping,
+                };
+
+                *to_adjust = (*to_adjust
+                    + match i {
+                        27 | 29 => 1,
+                        28 | 30 => -1,
                         _ => unreachable!(),
-                    };
-
-                    *to_adjust = ((*to_adjust as i8
-                        + match i {
-                            31 | 33 => 1,
-                            32 | 34 => -1,
-                            _ => unreachable!(),
-                        }) as u8)
-                        .clamp(MIN_ANALOG_SCALER, MAX_ANALOG_SCALER);
-
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_r = true;
-                                a.buttons_2.button_l = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_a = true;
-                                a.stick_x = 127;
-                                a.stick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => *to_adjust,
-                                        Stick::CStick => 0,
-                                    }) as u8;
-                                a.cstick_x = 127;
-                                a.cstick_y = (127
-                                    + match stick {
-                                        Stick::ControlStick => 0,
-                                        Stick::CStick => *to_adjust,
-                                    }) as u8;
-                                a
-                            }
-                        },
-                        duration_ms: 750,
                     })
-                    .await;
+                .clamp(-1, MAX_CARDINAL_SNAP);
 
-                    SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
-                }
-                // rumble strength changes
-                i if i >= 35 && i <= 36 => {
-                    let to_adjust = &mut final_config.rumble_strength;
-
-                    *to_adjust = (*to_adjust as i8
-                        + match i {
-                            35 => 1,
-                            36 => -1,
-                            _ => unreachable!(),
-                        })
-                    .clamp(0, MAX_RUMBLE_STRENGTH) as u8;
-
-                    SIGNAL_CHANGE_RUMBLE_STRENGTH.signal(*to_adjust);
-
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_r = true;
-                                a.buttons_2.button_l = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_a = true;
-                                a.buttons_2.button_z = true; // makes the controller rumble in smashscope
-                                a.stick_x = 127;
-                                a.stick_y = 127;
-                                a.cstick_x = 127;
-                                a.cstick_y = 127;
-                                a
-                            }
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
                         },
-                        duration_ms: 750,
-                    })
-                    .await;
-
-                    SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
-                }
-                // input consistency toggle
-                37 => {
-                    final_config.input_consistency_mode = !final_config.input_consistency_mode;
-
-                    override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                        report: match GcReport::default() {
-                            mut a => {
-                                a.trigger_r = 255;
-                                a.trigger_l = 255;
-                                a.buttons_2.button_r = true;
-                                a.buttons_2.button_l = true;
-                                a.buttons_1.button_x = true;
-                                a.buttons_1.button_a = true;
-                                a.stick_x = 127;
-                                a.stick_y = (127 as i8
-                                    + match final_config.input_consistency_mode {
-                                        true => 69,
-                                        false => -69,
-                                    }) as u8;
-                                a.cstick_x = 127;
-                                a.cstick_y = 127;
-                                a
-                            }
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
                         },
-                        duration_ms: 750,
-                    })
-                    .await;
+                        stick_x: 127,
+                        stick_y: (127
+                            + match stick {
+                                Stick::ControlStick => *to_adjust,
+                                Stick::CStick => 0,
+                            }) as u8,
+                        cstick_x: 127,
+                        cstick_y: (127
+                            + match stick {
+                                Stick::ControlStick => 0,
+                                Stick::CStick => *to_adjust,
+                            }) as u8,
+                    },
+                    duration_ms: 750,
+                })
+                .await;
 
-                    SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
-                }
-                s => {
-                    error!("Invalid selection in config loop: {}", s);
-                    continue;
-                }
-            },
+                SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
+            }
+            // scaling changes
+            i if (31..=34).contains(&i) => {
+                let stick = match i {
+                    31 | 32 => Stick::ControlStick,
+                    33 | 34 => Stick::CStick,
+                    _ => unreachable!(),
+                };
+
+                let to_adjust = match stick {
+                    Stick::ControlStick => &mut final_config.astick_config.analog_scaler,
+                    Stick::CStick => &mut final_config.cstick_config.analog_scaler,
+                };
+
+                *to_adjust = (*to_adjust as i8
+                    + match i {
+                        31 | 33 => 1,
+                        32 | 34 => -1,
+                        _ => unreachable!(),
+                    })
+                .clamp(MIN_ANALOG_SCALER as i8, MAX_ANALOG_SCALER as i8)
+                    as u8;
+
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
+                        },
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
+                        },
+                        stick_x: 127,
+                        stick_y: (127
+                            + match stick {
+                                Stick::ControlStick => *to_adjust,
+                                Stick::CStick => 0,
+                            }) as u8,
+                        cstick_x: 127,
+                        cstick_y: (127
+                            + match stick {
+                                Stick::ControlStick => 0,
+                                Stick::CStick => *to_adjust,
+                            }) as u8,
+                    },
+                    duration_ms: 750,
+                })
+                .await;
+
+                SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
+            }
+            // rumble strength changes
+            i if (35..=36).contains(&i) => {
+                let to_adjust = &mut final_config.rumble_strength;
+
+                *to_adjust = (*to_adjust as i8
+                    + match i {
+                        35 => 1,
+                        36 => -1,
+                        _ => unreachable!(),
+                    })
+                .clamp(0, MAX_RUMBLE_STRENGTH) as u8;
+
+                SIGNAL_CHANGE_RUMBLE_STRENGTH.signal(*to_adjust);
+
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            button_z: true,
+                            ..Default::default()
+                        },
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
+                        },
+                        stick_x: 127,
+                        stick_y: 127,
+                        cstick_x: 127,
+                        cstick_y: 127,
+                    },
+                    duration_ms: 750,
+                })
+                .await;
+
+                SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
+            }
+            // input consistency toggle
+            37 => {
+                final_config.input_consistency_mode = !final_config.input_consistency_mode;
+
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
+                        },
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
+                        },
+                        stick_x: 127,
+                        stick_y: (127_i8
+                            + match final_config.input_consistency_mode {
+                                true => 69,
+                                false => -69,
+                            }) as u8,
+                        cstick_x: 127,
+                        cstick_y: 127,
+                    },
+                    duration_ms: 750,
+                })
+                .await;
+
+                SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
+            }
+            s => {
+                error!("Invalid selection in config loop: {}", s);
+                continue;
+            }
         };
 
-        final_config.write_to_flash(&mut flash).unwrap();
+        final_config.write_to_flash(flash).unwrap();
     }
 
     info!("Exiting config main loop.");
@@ -1654,21 +1694,24 @@ pub async fn config_task(mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>) {
         info!("Entering config mode.");
 
         override_gcc_state_and_wait(&OverrideGcReportInstruction {
-            report: match GcReport::default() {
-                mut a => {
-                    a.trigger_r = 255;
-                    a.trigger_l = 255;
-                    a.buttons_2.button_l = true;
-                    a.buttons_2.button_r = true;
-                    a.buttons_1.button_x = true;
-                    a.buttons_1.button_y = true;
-                    a.buttons_1.button_a = true;
-                    a.stick_x = 127;
-                    a.stick_y = 127;
-                    a.cstick_x = 127;
-                    a.cstick_y = 127;
-                    a
-                }
+            report: GcReport {
+                trigger_r: 255,
+                trigger_l: 255,
+                buttons_2: Buttons2 {
+                    button_l: true,
+                    button_r: true,
+                    ..Default::default()
+                },
+                buttons_1: Buttons1 {
+                    button_x: true,
+                    button_y: true,
+                    button_a: true,
+                    ..Default::default()
+                },
+                stick_x: 127,
+                stick_y: 127,
+                cstick_x: 127,
+                cstick_y: 127,
             },
             duration_ms: 1000,
         })

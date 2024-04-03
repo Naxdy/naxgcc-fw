@@ -117,11 +117,12 @@ pub fn read_ext_adc<
         spi_ccs.set_high();
     }
 
-    return temp_value;
+    temp_value
 }
 
 /// Gets the average stick state over a 1ms interval in a non-blocking fashion.
 /// Will wait until end_time is reached before continuing after reading the ADCs.
+#[allow(clippy::too_many_arguments)]
 #[link_section = ".time_critical.update_stick_states"]
 async fn update_stick_states(
     current_stick_state: &StickState,
@@ -198,17 +199,18 @@ async fn update_stick_states(
     trace!("Raw Stick Values 001: {:?}", raw_stick_values);
 
     let (x_pos_filt, y_pos_filt) =
-        kalman_state.run_kalman(x_z, y_z, &controller_config.astick_config, &filter_gains);
+        kalman_state.run_kalman(x_z, y_z, &controller_config.astick_config, filter_gains);
 
-    let shaped_astick = match run_waveshaping(
-        x_pos_filt,
-        y_pos_filt,
-        controller_config.astick_config.x_waveshaping,
-        controller_config.astick_config.y_waveshaping,
-        controlstick_waveshaping_values,
-        &filter_gains,
-    ) {
-        (x, y) => XyValuePair { x, y },
+    let shaped_astick = {
+        let (x, y) = run_waveshaping(
+            x_pos_filt,
+            y_pos_filt,
+            controller_config.astick_config.x_waveshaping,
+            controller_config.astick_config.y_waveshaping,
+            controlstick_waveshaping_values,
+            filter_gains,
+        );
+        XyValuePair { x, y }
     };
 
     trace!("Shaped Controlstick: {}", shaped_astick);
@@ -220,15 +222,16 @@ async fn update_stick_states(
     old_stick_pos.x = pos_x;
     old_stick_pos.y = pos_y;
 
-    let shaped_cstick = match run_waveshaping(
-        pos_cx,
-        pos_cy,
-        controller_config.cstick_config.x_waveshaping,
-        controller_config.cstick_config.y_waveshaping,
-        cstick_waveshaping_values,
-        &filter_gains,
-    ) {
-        (x, y) => XyValuePair { x, y },
+    let shaped_cstick = {
+        let (x, y) = run_waveshaping(
+            pos_cx,
+            pos_cy,
+            controller_config.cstick_config.x_waveshaping,
+            controller_config.cstick_config.y_waveshaping,
+            cstick_waveshaping_values,
+            filter_gains,
+        );
+        XyValuePair { x, y }
     };
 
     let old_c_pos = XyValuePair {
@@ -250,41 +253,45 @@ async fn update_stick_states(
 
     trace!("Cstick position: {}, {}", pos_cx, pos_cy);
 
-    let mut remapped = match notch_remap(
-        pos_x,
-        pos_y,
-        controlstick_params,
-        &controller_config.astick_config,
-        is_calibrating,
-    ) {
-        (x, y) => XyValuePair { x, y },
+    let mut remapped = {
+        let (x, y) = notch_remap(
+            pos_x,
+            pos_y,
+            controlstick_params,
+            &controller_config.astick_config,
+            is_calibrating,
+        );
+        XyValuePair { x, y }
     };
-    let mut remapped_c = match notch_remap(
-        pos_cx_filt,
-        pos_cy_filt,
-        cstick_params,
-        &controller_config.cstick_config,
-        is_calibrating,
-    ) {
-        (x, y) => XyValuePair { x, y },
+    let mut remapped_c = {
+        let (x, y) = notch_remap(
+            pos_cx_filt,
+            pos_cy_filt,
+            cstick_params,
+            &controller_config.cstick_config,
+            is_calibrating,
+        );
+        XyValuePair { x, y }
     };
-    let remapped_unfiltered = match notch_remap(
-        raw_stick_values.a_linearized.x,
-        raw_stick_values.a_linearized.y,
-        controlstick_params,
-        &controller_config.astick_config,
-        is_calibrating,
-    ) {
-        (x, y) => XyValuePair { x, y },
+    let remapped_unfiltered = {
+        let (x, y) = notch_remap(
+            raw_stick_values.a_linearized.x,
+            raw_stick_values.a_linearized.y,
+            controlstick_params,
+            &controller_config.astick_config,
+            is_calibrating,
+        );
+        XyValuePair { x, y }
     };
-    let remapped_c_unfiltered = match notch_remap(
-        raw_stick_values.c_linearized.x,
-        raw_stick_values.c_linearized.y,
-        cstick_params,
-        &controller_config.cstick_config,
-        is_calibrating,
-    ) {
-        (x, y) => XyValuePair { x, y },
+    let remapped_c_unfiltered = {
+        let (x, y) = notch_remap(
+            raw_stick_values.c_linearized.x,
+            raw_stick_values.c_linearized.y,
+            cstick_params,
+            &controller_config.cstick_config,
+            is_calibrating,
+        );
+        XyValuePair { x, y }
     };
 
     trace!(
@@ -309,20 +316,20 @@ async fn update_stick_states(
     let mut out_stick_state = current_stick_state.clone();
 
     let diff_x = (remapped.x + FLOAT_ORIGIN) - current_stick_state.ax as f32;
-    if (diff_x > (1.0 + STICK_HYST_VAL)) || (diff_x < -STICK_HYST_VAL) {
+    if !(-STICK_HYST_VAL..=(1.0 + STICK_HYST_VAL)).contains(&diff_x) {
         out_stick_state.ax = (remapped.x + FLOAT_ORIGIN) as u8;
     }
     let diff_y = (remapped.y + FLOAT_ORIGIN) - current_stick_state.ay as f32;
-    if (diff_y > (1.0 + STICK_HYST_VAL)) || (diff_y < -STICK_HYST_VAL) {
+    if !(-STICK_HYST_VAL..=(1.0 + STICK_HYST_VAL)).contains(&diff_y) {
         out_stick_state.ay = (remapped.y + FLOAT_ORIGIN) as u8;
     }
 
     let diff_cx = (remapped_c.x + FLOAT_ORIGIN) - current_stick_state.cx as f32;
-    if (diff_cx > (1.0 + STICK_HYST_VAL)) || (diff_cx < -STICK_HYST_VAL) {
+    if !(-STICK_HYST_VAL..=(1.0 + STICK_HYST_VAL)).contains(&diff_cx) {
         out_stick_state.cx = (remapped_c.x + FLOAT_ORIGIN) as u8;
     }
     let diff_cy = (remapped_c.y + FLOAT_ORIGIN) - current_stick_state.cy as f32;
-    if (diff_cy > (1.0 + STICK_HYST_VAL)) || (diff_cy < -STICK_HYST_VAL) {
+    if !(-STICK_HYST_VAL..=(1.0 + STICK_HYST_VAL)).contains(&diff_cy) {
         out_stick_state.cy = (remapped_c.y + FLOAT_ORIGIN) as u8;
     }
 
@@ -337,6 +344,7 @@ async fn update_stick_states(
     out_stick_state
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_button_states<
     A: Pin,
     B: Pin,
@@ -405,6 +413,7 @@ pub async fn input_integrity_benchmark() {
 
 /// Task responsible for updating the button states.
 /// Publishes the result to CHANNEL_GCC_STATE.
+#[allow(clippy::too_many_arguments)]
 #[embassy_executor::task]
 pub async fn update_button_state_task(
     btn_z: Input<'static, AnyPin>,
@@ -424,6 +433,8 @@ pub async fn update_button_state_task(
     if btn_a.is_low() && btn_x.is_low() && btn_y.is_low() {
         info!("Detected reset button press, booting into flash.");
         embassy_rp::rom_data::reset_to_usb_boot(0, 0);
+
+        #[allow(clippy::empty_loop)]
         loop {}
     }
 
@@ -474,7 +485,7 @@ pub async fn update_button_state_task(
         };
 
         if let Some(override_state) = &override_stick_state {
-            let mut overriden_gcc_state = gcc_state.clone();
+            let mut overriden_gcc_state = gcc_state;
             match override_state.which_stick {
                 Stick::ControlStick => {
                     overriden_gcc_state.stick_x = override_state.x;
@@ -561,20 +572,20 @@ pub async fn update_stick_states_task(
             }
         }
 
-        match Instant::now() {
-            n => {
-                match (n - last_loop_time).as_micros() {
-                    a if a > 1666 => debug!("Loop took {} us", a),
-                    _ => {}
-                };
-                last_loop_time = n;
-            }
+        {
+            let n = Instant::now();
+
+            match (n - last_loop_time).as_micros() {
+                a if a > 1666 => debug!("Loop took {} us", a),
+                _ => {}
+            };
+            last_loop_time = n;
         };
 
         SIGNAL_STICK_STATE.signal(current_stick_state.clone());
 
-        ticker.next().await;
         yield_now().await;
+        ticker.next().await;
 
         if let Some(new_config) = SIGNAL_CONFIG_CHANGE.try_take() {
             controller_config = new_config;

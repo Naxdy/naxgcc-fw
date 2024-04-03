@@ -19,7 +19,7 @@ pub const NO_OF_CALIBRATION_POINTS: usize = 32;
 const MAX_ORDER: usize = 20;
 
 /// 28 degrees; this is the max angular deflection of the stick.
-const MAX_STICK_ANGLE: f32 = 0.4886921906;
+const MAX_STICK_ANGLE: f32 = 0.488_692_2;
 
 #[rustfmt::skip]
 //                                                                right        notch 1      up right     notch 2      up           notch 3      up left      notch 4      left         notch 5      down left    notch 6      down         notch 7      down right   notch 8
@@ -123,10 +123,10 @@ impl CleanedCalibrationPoints {
             out.cleaned_points.x[i + 1] = cal_points_x[i * 2 + 1];
             out.cleaned_points.y[i + 1] = cal_points_y[i * 2 + 1];
 
-            (out.notch_points.x[i + 1], out.notch_points.y[i + 1]) =
-                match calc_stick_values(notch_angles[i]) {
-                    (a, b) => (roundf(a), roundf(b)),
-                };
+            (out.notch_points.x[i + 1], out.notch_points.y[i + 1]) = {
+                let (a, b) = calc_stick_values(notch_angles[i]);
+                (roundf(a), roundf(b))
+            }
         }
 
         // TODO: put the below in a macro to clean it up a bit, once it's confirmed to work
@@ -186,6 +186,7 @@ impl CleanedCalibrationPoints {
         out.cleaned_points.x[0] /= (NO_OF_NOTCHES - 4) as f32;
         out.cleaned_points.y[0] /= (NO_OF_NOTCHES - 4) as f32;
 
+        #[allow(clippy::needless_range_loop)]
         for i in 0..NO_OF_NOTCHES {
             let delta_x = out.cleaned_points.x[i + 1] - out.cleaned_points.x[0];
             let delta_y = out.cleaned_points.y[i + 1] - out.cleaned_points.y[0];
@@ -241,11 +242,9 @@ impl LinearizedCalibration {
     ///
     /// Generate a fit to linearize the stick response.
     ///
-    /// Inputs:
-    ///     cleaned points X and Y, (must be 17 points for each of these, the first being the center, the others starting at 3 oclock and going around counterclockwise)
+    /// Inputs: cleaned points X and Y, (must be 17 points for each of these, the first being the center, the others starting at 3 oclock and going around counterclockwise)
     ///
-    ///	Outputs:
-    ///		linearization fit coefficients for X and Y
+    /// Outputs: linearization fit coefficients for X and Y
     pub fn from_calibration_points(cleaned_calibration_points: &CleanedCalibrationPoints) -> Self {
         let mut fit_points_x = [0f64; 5];
         let mut fit_points_y = [0f64; 5];
@@ -263,7 +262,7 @@ impl LinearizedCalibration {
         fit_points_x[1] = (in_x[6 + 1] + in_x[10 + 1]) / 2.0f64;
         fit_points_x[2] = in_x[0];
         fit_points_x[3] = (in_x[2 + 1] + in_x[14 + 1]) / 2.0f64;
-        fit_points_x[4] = in_x[0 + 1];
+        fit_points_x[4] = in_x[1];
 
         fit_points_y[0] = in_y[12 + 1];
         fit_points_y[1] = (in_y[10 + 1] + in_y[14 + 1]) / 2.0f64;
@@ -282,8 +281,8 @@ impl LinearizedCalibration {
         let x_zero_error = linearize(fit_points_x[2] as f32, &fit_coeffs_x.map(|e| e as f32));
         let y_zero_error = linearize(fit_points_y[2] as f32, &fit_coeffs_y.map(|e| e as f32));
 
-        fit_coeffs_x[3] = fit_coeffs_x[3] - x_zero_error as f64;
-        fit_coeffs_y[3] = fit_coeffs_y[3] - y_zero_error as f64;
+        fit_coeffs_x[3] -= x_zero_error as f64;
+        fit_coeffs_y[3] -= y_zero_error as f64;
 
         let mut linearized_points_x = [0f32; NO_OF_NOTCHES + 1];
         let mut linearized_points_y = [0f32; NO_OF_NOTCHES + 1];
@@ -376,6 +375,7 @@ impl NotchCalibration {
 
             trace!("The transform matrix is: {:?}", a);
 
+            #[allow(clippy::needless_range_loop)]
             for j in 0..2 {
                 for k in 0..2 {
                     out.affine_coeffs[i - 1][j * 2 + k] = a[j][k];
@@ -721,6 +721,7 @@ fn inverse(in_mat: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
     out_mat
 }
 
+#[allow(clippy::needless_range_loop)]
 fn matrix_mult(a: &[[f32; 3]; 3], b: &[[f32; 3]; 3]) -> [[f32; 3]; 3] {
     let mut out = [[0f32; 3]; 3];
 
@@ -777,8 +778,8 @@ fn det<const N: usize>(matrix: &[[f64; N]; N]) -> f64 {
 
     let mut p = 1f64;
 
-    for i in 0..N {
-        p *= matrix[i][i];
+    for (i, elem) in matrix.iter().enumerate().take(N) {
+        p *= elem[i];
     }
 
     p * (sign as f64)
@@ -798,9 +799,7 @@ fn trianglize<const N: usize>(matrix: &mut [[f64; N]; N]) -> i32 {
         }
         if max > 0 {
             sign = -sign;
-            let tmp = matrix[i];
-            matrix[i] = matrix[max];
-            matrix[max] = tmp;
+            matrix.swap(i, max);
         }
         if matrix[i][i] == 0. {
             return 0;
@@ -848,11 +847,11 @@ fn fit_curve<const N: usize, const NCOEFFS: usize>(
     for i in 0..N {
         let x = px[i];
         let y = py[i];
-        for j in 0..NCOEFFS * 2 - 1 {
-            s[j] += curve_fit_power(x, j as u32);
+        for (j, elem) in s.iter_mut().enumerate().take(NCOEFFS * 2 - 1) {
+            *elem += curve_fit_power(x, j as u32);
         }
-        for j in 0..NCOEFFS {
-            t[j] += y * curve_fit_power(x, j as u32);
+        for (j, elem) in t.iter_mut().enumerate().take(NCOEFFS) {
+            *elem += y * curve_fit_power(x, j as u32);
         }
     }
 
@@ -860,9 +859,7 @@ fn fit_curve<const N: usize, const NCOEFFS: usize>(
     let mut matrix = [[0f64; NCOEFFS]; NCOEFFS];
 
     for i in 0..NCOEFFS {
-        for j in 0..NCOEFFS {
-            matrix[i][j] = s[i + j];
-        }
+        matrix[i][..NCOEFFS].copy_from_slice(&s[i..(NCOEFFS + i)]);
     }
 
     let denom = det(&matrix);
@@ -893,7 +890,6 @@ pub fn linearize(point: f32, coefficients: &[f32; NUM_COEFFS]) -> f32 {
         + coefficients[3]
 }
 
-// TODO: currently broken!
 #[link_section = ".time_critical.notch_remap"]
 pub fn notch_remap(
     x_in: f32,
