@@ -78,7 +78,8 @@
           "--target=${CARGO_BUILD_TARGET}"
         ];
 
-        DEFMT_LOG = "warn";
+        # if a tree falls in the forest and no one is around to hear it, does it make a sound?
+        DEFMT_LOG = "off";
       };
 
       devShells.default = pkgs.mkShell {
