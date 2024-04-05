@@ -13,10 +13,6 @@ jobs:
           echo "extra-trusted-public-keys = attic:05LdE8Nav5Qd1E+KOJqSwdr+WE1z8AUmSb3oKL7s8dk=" >> /etc/nix/nix.conf
           nix profile install nixpkgs#nodejs "github:zhaofengli/attic?ref=6eabc3f02fae3683bffab483e614bebfcd476b21"
           echo "PATH=/nix/var/nix/profiles/per-user/root/profile/bin:$PATH" >> "$GITHUB_ENV"
-      - name: Set up attic binary cache
-        run: |
-          attic login "${{ vars.BINARY_CACHE_NAME }}" "${{ vars.BINARY_CACHE_URL }}" "${{ secrets.BINARY_CACHE_AUTH_KEY }}"
-          attic use "${{ vars.BINARY_CACHE_NAME }}"
       - uses: actions/checkout@v4
       - name: Run Clippy
         run: |

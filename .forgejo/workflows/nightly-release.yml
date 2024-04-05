@@ -21,8 +21,8 @@ jobs:
           echo "PATH=/nix/var/nix/profiles/per-user/root/profile/bin:$PATH" >> "$GITHUB_ENV"
       - name: Set up attic binary cache
         run: |
-          attic login "${{ vars.BINARY_CACHE_NAME }}" "${{ vars.BINARY_CACHE_URL }}" "${{ secrets.BINARY_CACHE_AUTH_KEY }}"
-          attic use "${{ vars.BINARY_CACHE_NAME }}"
+          attic login "${{ vars.PUBLIC_BINARY_CACHE_NAME }}" "${{ vars.BINARY_CACHE_URL }}" "${{ secrets.PUBLIC_BINARY_CACHE_AUTH_KEY }}"
+          attic use "${{ vars.PUBLIC_BINARY_CACHE_NAME }}"
       - name: Prepare SSH key
         run: |
           mkdir -p dist && mkdir -p ~/.ssh
@@ -34,7 +34,7 @@ jobs:
       - name: Push derivations to binary cache
         run: |
           cd /nix/store
-          attic push "${{ vars.BINARY_CACHE_NAME }}" $(ls /nix/store --ignore='*.drv' --ignore='*fake_nixpkgs*')
+          attic push "${{ vars.PUBLIC_BINARY_CACHE_NAME }}" $(ls /nix/store --ignore='*.drv' --ignore='*fake_nixpkgs*')
       - name: (Re-)generate tag
         run: |
           git config --global user.email "noreply@naxdy.org"
