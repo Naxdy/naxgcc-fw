@@ -23,10 +23,6 @@ jobs:
         run: |
           attic login "${{ vars.PUBLIC_BINARY_CACHE_NAME }}" "${{ vars.BINARY_CACHE_URL }}" "${{ secrets.PUBLIC_BINARY_CACHE_AUTH_KEY }}"
           attic use "${{ vars.PUBLIC_BINARY_CACHE_NAME }}"
-      - name: Prepare SSH key
-        run: |
-          mkdir -p dist && mkdir -p ~/.ssh
-          ssh-keyscan git.naxdy.org >> ~/.ssh/known_hosts
       - uses: actions/checkout@v4
       - name: Build firmware image
         run: |

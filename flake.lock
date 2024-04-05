@@ -9,12 +9,12 @@
         "rev": "2ee4657727b9679998d941de00b43e1754f570bf",
         "revCount": 6754,
         "type": "git",
-        "url": "ssh://gitea@git.naxdy.org/NaxdyOrg/embassy"
+        "url": "https://gitea@git.naxdy.org/NaxdyOrg/embassy"
       },
       "original": {
         "ref": "naxgcc-fw",
         "type": "git",
-        "url": "ssh://gitea@git.naxdy.org/NaxdyOrg/embassy"
+        "url": "https://gitea@git.naxdy.org/NaxdyOrg/embassy"
       }
     },
     "flake-utils": {
