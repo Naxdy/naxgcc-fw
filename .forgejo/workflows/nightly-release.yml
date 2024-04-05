@@ -48,7 +48,7 @@ jobs:
           prerelease: true
           name: "Nightly Release"
           body: >
-            This is an automatically generated nightly release.
+            This is an automatically generated nightly release, based on the current state of the `main` branch.
 
             **WARNING:** This release may contain untested changes and could potentially break your configuration. Use at your own risk. **Do not report issues you encounter with nightly releases.**
           files: |
