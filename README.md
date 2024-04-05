@@ -2,7 +2,7 @@
 
 This repo houses the firmware for the NaxGCC, a GameCube-style controller built on the [PhobGCC](https://github.com/PhobGCC/PhobGCC-SW). The firmware can also be used as an optional firmware for the PhobGCC, though the PhobGCC will then have to be connected to the console directly via USB.
 
-Like the PhobGCC, the NaxGCC uses hall effect sensors instead of potentiometers for stick input. Additionally, it connects directly to the console via USB, by pretending to be a GCC adapter with 1 controller (itself) connected. This eliminates one additional layer of polling, and thus reduces perceived latency and improves input consistency. The NaxGCC firmware makes use of the [embassy-rs](https://github.com/embassy-rs/embassy) framework for asynchronous operations. Mainly, this means that the firmware is capable of polling the sticks and buttons at different frequencies, further improving input consistency and latency for button inputs.
+Like the PhobGCC, the NaxGCC uses hall effect sensors instead of potentiometers for stick input. Additionally, it connects directly to the console via USB, by pretending to be a GCC adapter with 1 controller (itself) connected. This eliminates one additional layer of polling, and thus reduces perceived latency and improves input consistency. The NaxGCC also features a special "input consistency mode" that even further improves input consistency, beyond what is delivered by any other controller / adapter. The NaxGCC firmware makes use of the [embassy-rs](https://github.com/embassy-rs/embassy) framework for asynchronous operations. Mainly, this means that the firmware is capable of polling the sticks and buttons at different frequencies, further improving input consistency and latency for button inputs.
 
 ### Key Aspects
 
@@ -16,7 +16,7 @@ Furthermore, large parts of its firmware have also been taken from PhobGCC's fir
 
 </details>
 
-<details><summary>Firmware is written in Rust, using the <a href="#">embassy-rs</a> framework for asynchronous operations.</summary>
+<details><summary>Firmware is written in Rust, using the <a href="https://github.com/embassy-rs/embassy">embassy-rs</a> framework for asynchronous operations.</summary>
 
 The firmware being written in Rust allows for writing much cleaner code than one would normally be used to when writing firmware in C, because Rust allows for many zero and low cost abstractions in order to enhance code readability and maintainability. Adding embassy-rs for asynchronous operations on top of that provides 2 main benefits:
 
@@ -43,7 +43,7 @@ The NaxGCC firmware is compatible with regular Phob 2.0 boards (those using an R
 
 ## Contributing
 
-The NaxGCC firmware is built using [nix](), which also provides a ready-to-go development environment, complete with all the tooling and libraries you need to get going. Simply install nix, [enable flakes]() and run
+The NaxGCC firmware is built using [nix](https://nixos.org/download/), which also provides a ready-to-go development environment, complete with all the tooling and libraries you need to get going. Simply install nix, [enable flakes](https://nixos.wiki/wiki/Flakes) and run
 
 ```bash
 nix develop .
