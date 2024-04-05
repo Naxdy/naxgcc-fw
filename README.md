@@ -27,7 +27,7 @@ The firmware being written in Rust allows for writing much cleaner code than one
 
 <details><summary>Provides both the lowest latency of any Switch controller, as well as the best input integrity.</summary>
 
-Because the NaxGCC connects directly to the console via USB, it already outperforms any controller that has to go through an adapter in terms of input latency (including PhobGCC + Lossless Adapter).
+Because the NaxGCC connects directly to the console via USB, it already outperforms any controller that has to go through an adapter in terms of input latency.
 
 Further, the NaxGCC has a special "input consistency" mode (enabled by default), which ensures a $\gt 98\%$ input accuracy, compared to $\lt 75\%$ for any other controller (worse if there is an adapter in the mix, with the exception of the Lossless Adapter).
 
