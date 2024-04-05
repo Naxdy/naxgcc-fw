@@ -13,6 +13,10 @@ jobs:
           echo "extra-trusted-public-keys = attic:05LdE8Nav5Qd1E+KOJqSwdr+WE1z8AUmSb3oKL7s8dk=" >> /etc/nix/nix.conf
           nix profile install nixpkgs#nodejs "github:zhaofengli/attic?ref=6eabc3f02fae3683bffab483e614bebfcd476b21"
           echo "PATH=/nix/var/nix/profiles/per-user/root/profile/bin:$PATH" >> "$GITHUB_ENV"
+      - name: Prepare SSH key
+        run: |
+          mkdir -p dist && mkdir -p ~/.ssh
+          ssh-keyscan git.naxdy.org >> ~/.ssh/known_hosts
       - uses: actions/checkout@v4
       - name: Run Clippy
         run: |
