@@ -347,6 +347,27 @@ const INPUT_CONSISTENCY_TOGGLE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::Wildcard,
 ];
 
+const DISPLAY_WAVESHAPING_COMBO: [AwaitableButtons; 4] = [
+    AwaitableButtons::L,
+    AwaitableButtons::Start,
+    AwaitableButtons::Wildcard,
+    AwaitableButtons::Wildcard,
+];
+
+const DISPLAY_SMOOTHING_COMBO: [AwaitableButtons; 4] = [
+    AwaitableButtons::R,
+    AwaitableButtons::Start,
+    AwaitableButtons::Wildcard,
+    AwaitableButtons::Wildcard,
+];
+
+const DISPLAY_SNAPBACK_COMBO: [AwaitableButtons; 4] = [
+    AwaitableButtons::Up,
+    AwaitableButtons::Start,
+    AwaitableButtons::Wildcard,
+    AwaitableButtons::Wildcard,
+];
+
 const EXIT_CONFIG_MODE_COMBO: [AwaitableButtons; 4] = [
     AwaitableButtons::A,
     AwaitableButtons::X,
@@ -1116,6 +1137,9 @@ async fn configuration_main_loop<
         RUMBLE_STRENGTH_INCREASE_COMBO,
         RUMBLE_STRENGTH_DECREASE_COMBO,
         INPUT_CONSISTENCY_TOGGLE_COMBO,
+        DISPLAY_WAVESHAPING_COMBO,
+        DISPLAY_SMOOTHING_COMBO,
+        DISPLAY_SNAPBACK_COMBO,
     ];
 
     'main: loop {
@@ -1652,6 +1676,84 @@ async fn configuration_main_loop<
                 .await;
 
                 SIGNAL_CONFIG_CHANGE.signal(final_config.clone());
+            }
+            // display waveshaping values on both sticks
+            38 => {
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
+                        },
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
+                        },
+                        stick_x: 127 + final_config.astick_config.x_waveshaping,
+                        stick_y: 127 + final_config.astick_config.y_waveshaping,
+                        cstick_x: 127 + final_config.cstick_config.x_waveshaping,
+                        cstick_y: 127 + final_config.cstick_config.y_waveshaping,
+                    },
+                    duration_ms: 1000,
+                })
+                .await;
+            }
+            // display stick smoothing values on both sticks
+            39 => {
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
+                        },
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
+                        },
+                        stick_x: 127 + final_config.astick_config.x_smoothing,
+                        stick_y: 127 + final_config.astick_config.y_smoothing,
+                        cstick_x: 127 + final_config.cstick_config.x_smoothing,
+                        cstick_y: 127 + final_config.cstick_config.y_smoothing,
+                    },
+                    duration_ms: 1000,
+                })
+                .await;
+            }
+            // display snapback values on both sticks
+            40 => {
+                override_gcc_state_and_wait(&OverrideGcReportInstruction {
+                    report: GcReport {
+                        trigger_r: 255,
+                        trigger_l: 255,
+                        buttons_2: Buttons2 {
+                            button_r: true,
+                            button_l: true,
+                            ..Default::default()
+                        },
+                        buttons_1: Buttons1 {
+                            button_x: true,
+                            button_y: true,
+                            button_a: true,
+                            ..Default::default()
+                        },
+                        stick_x: (127 + final_config.astick_config.x_snapback) as u8,
+                        stick_y: (127 + final_config.astick_config.y_snapback) as u8,
+                        cstick_x: (127 + final_config.cstick_config.x_snapback) as u8,
+                        cstick_y: (127 + final_config.cstick_config.y_snapback) as u8,
+                    },
+                    duration_ms: 1000,
+                })
+                .await;
             }
             s => {
                 error!("Invalid selection in config loop: {}", s);
