@@ -3,7 +3,7 @@ name: Code quality
 on: pull_request
 
 concurrency:
-  group: ${{ gitea.ref }}
+  group: ${{ env.GITHUB_HEAD_REF }}
   cancel-in-progress: true
 
 jobs:
@@ -20,4 +20,4 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run Clippy
         run: |
-          nix develop . --command cargo clippy -- -Dwarnings 
+          nix develop . --command cargo clippy -- -Dwarnings
