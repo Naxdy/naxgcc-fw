@@ -32,7 +32,8 @@ jobs:
         uses: https://gitea.com/actions/gitea-release-action@v1.3.0
         with:
           token: "${{ github.token }}"
-          tag_name: "${{ github.ref }}"
-          prerelease: false
+          tag_name: "${{ env.GITHUB_REF_NAME }}"
+          name: "NaxGCC ${{ env.GITHUB_REF_NAME }}"
+          body_path: .changelogs/${{ env.GITHUB_REF_NAME }}.md
           files: |
             dist/bin/*
