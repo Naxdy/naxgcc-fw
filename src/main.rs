@@ -104,21 +104,6 @@ fn main() -> ! {
         });
     });
 
-    // Stick loop has to run on core0 because it makes use of SPI0.
-    // Perhaps in the future we can rewire the board to have it make use of SPI1 instead.
-    // This way it could be the sole task running on core1, and everything else could happen on core0.
-    // Also, it needs to run on a higher prio executor to ensure consistent polling.
-    // interrupt::SWI_IRQ_1.set_priority(interrupt::Priority::P0);
-    // let spawner_high = EXECUTOR_HIGH.start(interrupt::SWI_IRQ_1);
-    // spawner_high
-    //     .spawn(update_stick_states_task(
-    //         spi,
-    //         spi_acs,
-    //         spi_ccs,
-    //         controller_config.clone(),
-    //     ))
-    //     .unwrap();
-
     let executor0 = EXECUTOR0.init(Executor::new());
     info!("Initialized.");
 

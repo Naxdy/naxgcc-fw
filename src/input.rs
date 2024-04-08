@@ -16,11 +16,12 @@ use libm::{fmaxf, fminf};
 
 use crate::{
     config::{
-        ControllerConfig, OverrideGcReportInstruction, OverrideStickState, SIGNAL_CONFIG_CHANGE,
-        SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE, SIGNAL_OVERRIDE_STICK_STATE,
+        ControllerConfig, InputConsistencyMode, OverrideGcReportInstruction, OverrideStickState,
+        SIGNAL_CONFIG_CHANGE, SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE,
+        SIGNAL_OVERRIDE_STICK_STATE,
     },
     filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
-    gcc_hid::GcReport,
+    gcc_hid::{GcReport, MUTEX_INPUT_CONSISTENCY_MODE},
     helpers::XyValuePair,
     input_filter::{DummyFilter, InputFilter},
     stick::{linearize, notch_remap, StickParams},
@@ -439,6 +440,15 @@ pub async fn update_button_state_task(
         loop {}
     }
 
+    let input_consistency_mode = {
+        while MUTEX_INPUT_CONSISTENCY_MODE.lock().await.is_none() {
+            Timer::after(Duration::from_millis(100)).await;
+        }
+        MUTEX_INPUT_CONSISTENCY_MODE.lock().await.unwrap()
+    };
+
+    let mut previous_state = GcReport::default();
+
     let mut gcc_state = GcReport::default();
 
     let gcc_publisher = CHANNEL_GCC_STATE.publisher().unwrap();
@@ -483,7 +493,15 @@ pub async fn update_button_state_task(
             trace!("Overridden gcc state: {:?}", override_gcc_state.report);
             let end_time = Instant::now() + Duration::from_millis(override_gcc_state.duration_ms);
             while Instant::now() < end_time {
-                gcc_publisher.publish_immediate(override_gcc_state.report);
+                if input_consistency_mode == InputConsistencyMode::SuperHack {
+                    if override_gcc_state.report != previous_state {
+                        gcc_publisher.publish_immediate(override_gcc_state.report);
+                        previous_state = override_gcc_state.report;
+                    }
+                } else {
+                    gcc_publisher.publish_immediate(override_gcc_state.report);
+                }
+
                 yield_now().await;
             }
         };
@@ -503,7 +521,14 @@ pub async fn update_button_state_task(
             gcc_publisher.publish_immediate(overriden_gcc_state);
         } else {
             input_filter.apply_filter(&mut gcc_state);
-            gcc_publisher.publish_immediate(gcc_state);
+            if input_consistency_mode == InputConsistencyMode::SuperHack {
+                if gcc_state != previous_state {
+                    gcc_publisher.publish_immediate(gcc_state);
+                    previous_state = gcc_state;
+                }
+            } else {
+                gcc_publisher.publish_immediate(gcc_state);
+            }
         }
 
         // give other tasks a chance to do something

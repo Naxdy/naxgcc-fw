@@ -10,12 +10,13 @@ use embassy_rp::{
     flash::{Async, Flash, ERASE_SIZE},
     peripherals::FLASH,
 };
-use packed_struct::{derive::PackedStruct, PackedStruct};
+use packed_struct::{
+    derive::{PackedStruct, PrimitiveEnum_u8},
+    PackedStruct,
+};
 
 use crate::{
-    gcc_hid::{
-        Buttons1, Buttons2, SIGNAL_CHANGE_RUMBLE_STRENGTH, SIGNAL_INPUT_CONSISTENCY_MODE_STATUS,
-    },
+    gcc_hid::{Buttons1, Buttons2, MUTEX_INPUT_CONSISTENCY_MODE, SIGNAL_CHANGE_RUMBLE_STRENGTH},
     helpers::{PackedFloat, ToPackedFloatArray, ToRegularArray, XyValuePair},
     input::{
         read_ext_adc, Stick, StickAxis, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED, SPI_SHARED,
@@ -544,6 +545,19 @@ impl Default for StickConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Format, PrimitiveEnum_u8, PartialEq, Eq)]
+pub enum InputConsistencyMode {
+    /// Transmit inputs every 8ms, same as the original GCC adapter (and any other).
+    Original = 0,
+    /// Forcibly delay transmissions to be 8.33ms apart, to better align with the game's frame rate.
+    ConsistencyHack = 1,
+    /// Transmit inputs _at most_ every 8.33ms, but don't transmit anything at all if the controller state doesn't change.
+    /// This has the potential to drastically improve latency in certain situations, such as when you are waiting to react
+    /// to something your opponent does.
+    /// The name is not meant to imply that this is a hack that is super, but rather that this is super hacky.
+    SuperHack = 2,
+}
+
 #[derive(Debug, Clone, Format, PackedStruct)]
 #[packed_struct(endian = "msb")]
 pub struct ControllerConfig {
@@ -553,8 +567,8 @@ pub struct ControllerConfig {
     /// will trick the Switch into updating the state every 8.33ms
     /// instead of every 8ms. The tradeoff is a slight increase in
     /// input lag.
-    #[packed_field(size_bits = "8")]
-    pub input_consistency_mode: bool,
+    #[packed_field(size_bits = "8", ty = "enum")]
+    pub input_consistency_mode: InputConsistencyMode,
     #[packed_field(size_bits = "8")]
     pub rumble_strength: u8,
     #[packed_field(size_bytes = "328")]
@@ -567,7 +581,7 @@ impl Default for ControllerConfig {
     fn default() -> Self {
         Self {
             config_revision: CONTROLLER_CONFIG_REVISION,
-            input_consistency_mode: true,
+            input_consistency_mode: InputConsistencyMode::ConsistencyHack,
             astick_config: StickConfig::default(),
             rumble_strength: 9,
             cstick_config: StickConfig::default(),
@@ -1645,7 +1659,11 @@ async fn configuration_main_loop<
             }
             // input consistency toggle
             37 => {
-                final_config.input_consistency_mode = !final_config.input_consistency_mode;
+                final_config.input_consistency_mode = match final_config.input_consistency_mode {
+                    InputConsistencyMode::Original => InputConsistencyMode::ConsistencyHack,
+                    InputConsistencyMode::ConsistencyHack => InputConsistencyMode::SuperHack,
+                    InputConsistencyMode::SuperHack => InputConsistencyMode::Original,
+                };
 
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
                     report: GcReport {
@@ -1665,8 +1683,9 @@ async fn configuration_main_loop<
                         stick_x: 127,
                         stick_y: (127_i8
                             + match final_config.input_consistency_mode {
-                                true => 69,
-                                false => -69,
+                                InputConsistencyMode::Original => -69,
+                                InputConsistencyMode::ConsistencyHack => 42,
+                                InputConsistencyMode::SuperHack => 69,
                             }) as u8,
                         cstick_x: 127,
                         cstick_y: 127,
@@ -1784,7 +1803,11 @@ pub async fn config_task(mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>) {
 
     let mut current_config = ControllerConfig::from_flash_memory(&mut flash).unwrap();
 
-    SIGNAL_INPUT_CONSISTENCY_MODE_STATUS.signal(current_config.input_consistency_mode);
+    {
+        let mut m_input_consistency = MUTEX_INPUT_CONSISTENCY_MODE.lock().await;
+        *m_input_consistency = Some(current_config.input_consistency_mode);
+    }
+
     SIGNAL_CHANGE_RUMBLE_STRENGTH.signal(current_config.rumble_strength);
     SIGNAL_CONFIG_CHANGE.signal(current_config.clone());
 

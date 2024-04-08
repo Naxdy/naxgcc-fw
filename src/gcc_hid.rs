@@ -12,8 +12,8 @@ use embassy_rp::{
     usb::Driver,
 };
 
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use embassy_time::{Duration, Instant, Ticker};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, signal::Signal};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use embassy_usb::{
     class::hid::{HidReaderWriter, ReportId, RequestHandler, State},
     control::OutResponse,
@@ -22,7 +22,7 @@ use embassy_usb::{
 use libm::powf;
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
-use crate::input::CHANNEL_GCC_STATE;
+use crate::{config::InputConsistencyMode, input::CHANNEL_GCC_STATE};
 
 static SIGNAL_RUMBLE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
@@ -31,8 +31,10 @@ static SIGNAL_RUMBLE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 pub static SIGNAL_CHANGE_RUMBLE_STRENGTH: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 
 /// Only dispatched ONCE after powerup, to determine how to advertise itself via USB.
-pub static SIGNAL_INPUT_CONSISTENCY_MODE_STATUS: Signal<CriticalSectionRawMutex, bool> =
-    Signal::new();
+pub static MUTEX_INPUT_CONSISTENCY_MODE: Mutex<
+    CriticalSectionRawMutex,
+    Option<InputConsistencyMode>,
+> = Mutex::new(None);
 
 #[rustfmt::skip]
 pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
@@ -266,7 +268,12 @@ impl Handler for MyDeviceHandler {
 
 #[embassy_executor::task]
 pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>) {
-    let input_consistency_mode = SIGNAL_INPUT_CONSISTENCY_MODE_STATUS.wait().await;
+    let input_consistency_mode = {
+        while MUTEX_INPUT_CONSISTENCY_MODE.lock().await.is_none() {
+            Timer::after(Duration::from_millis(100)).await;
+        }
+        MUTEX_INPUT_CONSISTENCY_MODE.lock().await.unwrap()
+    };
 
     let mut serial_buffer = [0u8; 64];
 
@@ -291,10 +298,10 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
     trace!("Start of config");
     let mut usb_config = embassy_usb::Config::new(0x057e, 0x0337);
     usb_config.manufacturer = Some("Naxdy");
-    usb_config.product = Some(if input_consistency_mode {
-        "NaxGCC (Consistency Mode)"
-    } else {
-        "NaxGCC (OG Mode)"
+    usb_config.product = Some(match input_consistency_mode {
+        InputConsistencyMode::Original => "NaxGCC (OG Mode)",
+        InputConsistencyMode::ConsistencyHack => "NaxGCC (Consistency Mode)",
+        InputConsistencyMode::SuperHack => "NaxGCC (SuperHack Mode)",
     });
     usb_config.serial_number = Some(serial);
     usb_config.max_power = 200;
@@ -331,7 +338,7 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
     let hid_config = embassy_usb::class::hid::Config {
         report_descriptor: GCC_REPORT_DESCRIPTOR,
         request_handler: Some(&request_handler),
-        poll_ms: if input_consistency_mode { 4 } else { 8 },
+        poll_ms: 8,
         max_packet_size_in: 37,
         max_packet_size_out: 5,
     };
@@ -350,25 +357,37 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
 
     let (mut reader, mut writer) = hid.split();
 
-    let mut lasttime = Instant::now();
-
     let in_fut = async {
         let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
 
+        let mut last_report_time = Instant::now();
         let mut ticker = Ticker::every(Duration::from_micros(8333));
 
         loop {
-            if input_consistency_mode {
-                // This is what we like to call a "hack".
-                // It forces reports to be sent every 8.33ms instead of every 8ms.
-                // 8.33ms is a multiple of the game's frame interval (16.66ms), so if we
-                // send a report every 8.33ms, it should (in theory) ensure (close to)
-                // 100% input accuracy.
-                //
-                // From the console's perspective, we are basically a laggy adapter, taking
-                // a minimum of 333 extra us to send a report every time it's polled, but it
-                // works to our advantage.
-                ticker.next().await;
+            // This is what we like to call a "hack".
+            // It forces reports to be sent at least every 8.33ms instead of every 8ms.
+            // 8.33ms is a multiple of the game's frame interval (16.66ms), so if we
+            // send a report every 8.33ms, it should (in theory) ensure (close to)
+            // 100% input accuracy.
+            //
+            // From the console's perspective, we are basically a laggy adapter, taking
+            // a minimum of 333 extra us to send a report every time it's polled, but it
+            // works to our advantage.
+            match input_consistency_mode {
+                InputConsistencyMode::SuperHack => {
+                    // In SuperHack mode, we send reports only if the state changes, but
+                    // in order to not mess up very fast inputs (like sticks travelling, for example),
+                    // we still need to "rate limit" the reports to every 8.33ms at most.
+                    // This does rate limit it to ~8.33ms fairly well, my only
+                    // gripe with it is that I hate it :)
+                    Timer::at(last_report_time + Duration::from_micros(8100)).await;
+                }
+                InputConsistencyMode::ConsistencyHack => {
+                    // Ticker better maintains a consistent interval than Timer, so
+                    // we prefer it for consistency mode, where we send reports regularly.
+                    ticker.next().await;
+                }
+                InputConsistencyMode::Original => {}
             }
 
             match writer
@@ -382,15 +401,17 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
             {
                 Ok(()) => {
                     let currtime = Instant::now();
-                    let polltime = currtime.duration_since(lasttime);
+                    let polltime = currtime.duration_since(last_report_time);
                     let micros = polltime.as_micros();
-                    trace!("Report written in {}us", micros);
-                    // If we're sending reports too fast, reset the ticker.
+                    debug!("Report written in {}us", micros);
+                    // If we're sending reports too fast in regular consistency mode, reset the ticker.
                     // This might happen right after plug-in, or after suspend.
-                    if micros < 8150 {
-                        ticker.reset();
+                    if input_consistency_mode == InputConsistencyMode::ConsistencyHack
+                        && micros < 8150
+                    {
+                        ticker.reset()
                     }
-                    lasttime = currtime;
+                    last_report_time = currtime;
                 }
                 Err(e) => warn!("Failed to send report: {:?}", e),
             }
