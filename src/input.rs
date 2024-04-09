@@ -155,8 +155,9 @@ async fn update_stick_states(
     let spi_acs = spi_acs_unlocked.as_mut().unwrap();
     let spi_ccs = spi_ccs_unlocked.as_mut().unwrap();
 
-    // "do-while at home"
-    while {
+    let mut done = false;
+
+    while !done {
         let loop_start = Instant::now();
 
         adc_count += 1;
@@ -166,8 +167,9 @@ async fn update_stick_states(
         cy_sum += read_ext_adc(Stick::CStick, StickAxis::YAxis, spi, spi_acs, spi_ccs) as u32;
 
         let loop_end = Instant::now();
-        loop_end < end_time - (loop_end - loop_start)
-    } {}
+
+        done = loop_end >= end_time - (loop_end - loop_start);
+    }
 
     trace!("ADC Count: {}", adc_count);
 

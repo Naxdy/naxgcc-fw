@@ -466,7 +466,7 @@ pub struct OverrideStickState {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Format)]
+#[derive(Clone, Copy, Debug, Format, PartialEq, Eq)]
 pub enum AwaitableButtons {
     A,
     B,
@@ -881,6 +881,28 @@ impl<'a> StickCalibrationProcess<'a> {
         }
     }
 
+    fn calibration_skip_measurement(&mut self) {
+        self.calibration_step = NO_OF_CALIBRATION_POINTS as u8;
+
+        let stick_config = match self.which_stick {
+            Stick::ControlStick => &mut self.gcc_config.astick_config,
+            Stick::CStick => &mut self.gcc_config.cstick_config,
+        };
+
+        for i in 0..NO_OF_CALIBRATION_POINTS {
+            self.cal_points[i] = XyValuePair {
+                x: *stick_config.cal_points_x[i],
+                y: *stick_config.cal_points_y[i],
+            };
+        }
+
+        self.applied_calibration = AppliedCalibration::from_points(
+            stick_config.cal_points_x.to_regular_array(),
+            stick_config.cal_points_y.to_regular_array(),
+            stick_config,
+        );
+    }
+
     async fn calibration_advance(&mut self) -> bool {
         info!(
             "Running calibration advance on stick {} at step {}",
@@ -987,7 +1009,9 @@ impl<'a> StickCalibrationProcess<'a> {
         let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
         SIGNAL_IS_CALIBRATING.signal(true);
 
-        while {
+        let mut done = false;
+
+        while !done {
             if self.calibration_step < NO_OF_CALIBRATION_POINTS as u8 {
                 // Calibration phase
 
@@ -1013,9 +1037,14 @@ impl<'a> StickCalibrationProcess<'a> {
                 // Prevent accidental double presses
                 Timer::after_millis(100).await;
 
-                gcc_subscriber
-                    .wait_for_button_press(&AwaitableButtons::A)
+                let btn_result = gcc_subscriber
+                    .wait_and_filter_button_press(&[AwaitableButtons::A, AwaitableButtons::Start])
                     .await;
+
+                if btn_result == AwaitableButtons::Start {
+                    self.calibration_skip_measurement();
+                    continue;
+                }
             } else {
                 // Notch adjustment phase
 
@@ -1073,8 +1102,8 @@ impl<'a> StickCalibrationProcess<'a> {
                 }
             };
 
-            !self.calibration_advance().await
-        } {}
+            done = self.calibration_advance().await;
+        }
 
         SIGNAL_IS_CALIBRATING.signal(false);
         SIGNAL_OVERRIDE_STICK_STATE.signal(None);
