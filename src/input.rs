@@ -458,6 +458,10 @@ pub async fn update_button_state_task(
     // replace this with the input filter of your choice, if you so desire.
     let mut input_filter = DummyFilter;
 
+    let mut initializing = true;
+
+    let init_time = Instant::now();
+
     loop {
         update_button_states(
             &mut gcc_state,
@@ -522,7 +526,13 @@ pub async fn update_button_state_task(
         } else {
             input_filter.apply_filter(&mut gcc_state);
             if input_consistency_mode == InputConsistencyMode::SuperHack {
-                if gcc_state != previous_state {
+                // transmit state always for the first 5 seconds to give the console time to initialize the controller
+                if initializing && Instant::now().duration_since(init_time) > Duration::from_secs(5)
+                {
+                    initializing = false;
+                }
+
+                if gcc_state != previous_state || initializing {
                     gcc_publisher.publish_immediate(gcc_state);
                     previous_state = gcc_state;
                 }
