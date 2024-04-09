@@ -1,5 +1,15 @@
 # NaxGCC
 
+The main repository is located at [git.naxdy.org](https://git.naxdy.org/NaxdyOrg/NaxGCC-FW). The GitHub mirror exists solely for the sake of discoverability and redundancy.
+
+> **Please do not submit issues or pull requests on GitHub.**
+
+Find the latest releases here: https://git.naxdy.org/NaxdyOrg/NaxGCC-FW/releases
+
+Full documentation is available at [gcc.naxdy.org](https://gcc.naxdy.org/).
+
+---
+
 This repo houses the firmware for the NaxGCC, a GameCube-style controller built on the [PhobGCC](https://github.com/PhobGCC/PhobGCC-SW). The firmware can also be used as an optional firmware for the PhobGCC, though the PhobGCC will then have to be connected to the console directly via USB.
 
 Like the PhobGCC, the NaxGCC uses hall effect sensors instead of potentiometers for stick input. Additionally, it connects directly to the console via USB, by pretending to be a GCC adapter with 1 controller (itself) connected. This eliminates one additional layer of polling, and thus reduces perceived latency and improves input consistency. The NaxGCC also features a special "input consistency mode" that even further improves input consistency, beyond what is delivered by any other controller / adapter. The NaxGCC firmware makes use of the [embassy-rs](https://github.com/embassy-rs/embassy) framework for asynchronous operations. Mainly, this means that the firmware is capable of polling the sticks and buttons at different frequencies, further improving input consistency and latency for button inputs.
@@ -29,9 +39,9 @@ The firmware being written in Rust allows for writing much cleaner code than one
 
 Because the NaxGCC connects directly to the console via USB, it already outperforms any controller that has to go through an adapter in terms of input latency.
 
-Further, the NaxGCC has a special "input consistency" mode (enabled by default), which ensures a $\gt 98\%$ input accuracy, compared to $\lt 75\%$ for any other controller (worse if there is an adapter in the mix, with the exception of the Lossless Adapter).
+Further, the NaxGCC has a special "input consistency" mode (enabled by default), which ensures a $\gt 98\%$ input accuracy, compared to $\lt 76\%$ for any other controller (worse if there is an adapter in the mix, with the exception of the Lossless Adapter).
 
-For details on how it works, have a look at our wiki.
+For details on how it works, have a look at our [documentation](https://gcc.naxdy.org/).
 
 </details>
 
