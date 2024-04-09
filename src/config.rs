@@ -1676,7 +1676,7 @@ async fn configuration_main_loop<
                             ..Default::default()
                         },
                         stick_x: 127,
-                        stick_y: 127,
+                        stick_y: 127 + *to_adjust,
                         cstick_x: 127,
                         cstick_y: 127,
                     },
