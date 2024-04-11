@@ -8,6 +8,8 @@ Find the latest releases here: https://git.naxdy.org/NaxdyOrg/NaxGCC-FW/releases
 
 Full documentation is available at [gcc.naxdy.org](https://gcc.naxdy.org/).
 
+Join the NaxGCC matrix chat at [#naxgcc:naxdy.org](https://matrix.to/#/#naxgcc:naxdy.org) to discuss development or ask for help.
+
 ---
 
 This repo houses the firmware for the NaxGCC, a GameCube-style controller built on the [PhobGCC](https://github.com/PhobGCC/PhobGCC-SW). The firmware can also be used as an optional firmware for the PhobGCC, though the PhobGCC will then have to be connected to the console directly via USB.
