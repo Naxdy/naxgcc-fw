@@ -61,4 +61,4 @@ The NaxGCC firmware is built using [nix](https://nixos.org/download/), which als
 nix develop .
 ```
 
-and you're ready to work on the project. Submit your pull requests [here](https://git.naxdy.org/NaxdyOrg/NaxGCC-FW/pulls).
+and you're ready to work on the project. Submit your pull requests [here](https://git.naxdy.org/NaxdyOrg/NaxGCC-FW/pulls). Also be sure to have a look at our [CONTRIBUTING.md](./CONTRIBUTING.md) for more information on how to contribute.
