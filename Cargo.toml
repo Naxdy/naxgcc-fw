@@ -51,9 +51,6 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 packed_struct = { version = "0.10.1", default_features = false }
 format_no_std = "1.0.2"
 rand = { version = "0.8.5", default-features = false }
-tiny_sort = { version = "1.0.5", default-features = false, features = [
-    "unstable",
-] }
 
 # cargo build/run
 [profile.dev]
