@@ -338,7 +338,7 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
     let hid_config = embassy_usb::class::hid::Config {
         report_descriptor: GCC_REPORT_DESCRIPTOR,
         request_handler: Some(&request_handler),
-        poll_ms: 8,
+        poll_ms: 1,
         max_packet_size_in: 37,
         max_packet_size_out: 5,
     };
