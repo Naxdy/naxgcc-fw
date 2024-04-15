@@ -465,6 +465,8 @@ pub struct OverrideStickState {
     pub which_stick: Stick,
 }
 
+/// Enum button representation mainly used in the calibration process,
+/// in conjunction with `is_awaitable_button_pressed`
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Format, PartialEq, Eq)]
 pub enum AwaitableButtons {
@@ -480,11 +482,11 @@ pub enum AwaitableButtons {
     L,
     R,
     Z,
-    // special, because Z is used for cstick calibration
+    /// Special, because Z is used for cstick calibration.
     NotZ,
-    /// Used for padding arrays to the correct length.
+    /// Can be used for padding arrays to a fixed length.
     Wildcard,
-    /// Used for disabling certain button combinations.\
+    /// Can be used for disabling certain button combinations.
     Impossible,
 }
 
@@ -595,12 +597,7 @@ impl ControllerConfig {
     ) -> Result<Self, embassy_rp::flash::Error> {
         let mut controller_config_packed: <ControllerConfig as packed_struct::PackedStruct>::ByteArray = ControllerConfig::default().pack().unwrap();
 
-        let r = flash.blocking_read(ADDR_OFFSET, &mut controller_config_packed);
-
-        if r.is_err() {
-            warn!("Controller config not found in flash, using default.");
-            controller_config_packed = [0u8; 659];
-        }
+        flash.blocking_read(ADDR_OFFSET, &mut controller_config_packed)?;
 
         match ControllerConfig::unpack(&controller_config_packed) {
             Ok(cfg) => match cfg {
@@ -634,39 +631,42 @@ impl ControllerConfig {
     }
 }
 
-trait WaitForButtonPress {
+/// Trait for providing button presses, used in the calibration process.
+trait ButtonPressProvider {
     /// Wait for a single button press.
     async fn wait_for_button_press(&mut self, button_to_wait_for: &AwaitableButtons);
 
     /// Wait for a single button release.
     async fn wait_for_button_release(&mut self, button_to_wait_for: &AwaitableButtons);
 
-    /// Wait for multiple buttons to be pressed simultaneously.
+    /// Wait for multiple buttons to be pressed simultaneously. Non-exclusive.
     async fn wait_for_simultaneous_button_presses<const N: usize>(
         &mut self,
         buttons_to_wait_for: &[AwaitableButtons; N],
     );
 
-    /// Wait for a single button press of specified buttons, and return the button that was pressed.
+    /// Wait for a single button press of specified buttons, and return the button that was pressed. Non-exclusive.
     async fn wait_and_filter_button_press<const N: usize>(
         &mut self,
         buttons_to_wait_for: &[AwaitableButtons; N],
     ) -> AwaitableButtons;
 
-    /// See if one of the buttons in buttons_to_look_out_for is pressed, and return the pressed button, otherwise None.
+    /// See if one of the buttons in buttons_to_look_out_for is pressed, and return the pressed button, otherwise None. Non-exclusive.
     fn filter_button_press_if_present<const N: usize>(
         &mut self,
         buttons_to_look_out_for: &[AwaitableButtons; N],
     ) -> Option<AwaitableButtons>;
 
     /// Wait for multiple possible button combinations to be pressed simultaneously, and return the index of the combination that was pressed.
+    ///
+    /// Note that this is done non-exclusively, so if the pressed buttons match multiple combinations, the first matching index in the array will be returned.
     async fn wait_and_filter_simultaneous_button_presses<const N: usize, const M: usize>(
         &mut self,
         buttons_to_wait_for: &[[AwaitableButtons; N]; M],
     ) -> usize;
 }
 
-impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> WaitForButtonPress
+impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> ButtonPressProvider
     for Subscriber<'a, T, GcReport, I, J, K>
 {
     async fn wait_for_button_press(&mut self, button_to_wait_for: &AwaitableButtons) {
