@@ -349,33 +349,20 @@ async fn update_stick_states(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn update_button_states<
-    A: Pin,
-    B: Pin,
-    X: Pin,
-    Y: Pin,
-    Start: Pin,
-    L: Pin,
-    R: Pin,
-    Z: Pin,
-    DLeft: Pin,
-    DRight: Pin,
-    DUp: Pin,
-    DDown: Pin,
->(
+fn update_button_states(
     gcc_state: &mut GcReport,
-    btn_a: &Input<'_, A>,
-    btn_b: &Input<'_, B>,
-    btn_x: &Input<'_, X>,
-    btn_y: &Input<'_, Y>,
-    btn_start: &Input<'_, Start>,
-    btn_l: &Input<'_, L>,
-    btn_r: &Input<'_, R>,
-    btn_z: &Input<'_, Z>,
-    btn_dleft: &Input<'_, DLeft>,
-    btn_dright: &Input<'_, DRight>,
-    btn_dup: &Input<'_, DUp>,
-    btn_ddown: &Input<'_, DDown>,
+    btn_a: &Input<'_, AnyPin>,
+    btn_b: &Input<'_, AnyPin>,
+    btn_x: &Input<'_, AnyPin>,
+    btn_y: &Input<'_, AnyPin>,
+    btn_start: &Input<'_, AnyPin>,
+    btn_l: &Input<'_, AnyPin>,
+    btn_r: &Input<'_, AnyPin>,
+    btn_z: &Input<'_, AnyPin>,
+    btn_dleft: &Input<'_, AnyPin>,
+    btn_dright: &Input<'_, AnyPin>,
+    btn_dup: &Input<'_, AnyPin>,
+    btn_ddown: &Input<'_, AnyPin>,
 ) {
     gcc_state.buttons_1.button_a = btn_a.is_low();
     gcc_state.buttons_1.button_b = btn_b.is_low();
