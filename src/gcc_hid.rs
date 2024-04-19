@@ -13,7 +13,7 @@ use embassy_rp::{
 };
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, signal::Signal};
-use embassy_time::{Duration, Instant, Ticker, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embassy_usb::{
     class::hid::{HidReaderWriter, ReportId, RequestHandler, State},
     control::OutResponse,
@@ -361,7 +361,7 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
         let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
 
         let mut last_report_time = Instant::now();
-        let mut ticker = Ticker::every(Duration::from_micros(8333));
+        let mut rate_limit_end_time = Instant::now();
 
         loop {
             // This is what we like to call a "hack".
@@ -374,18 +374,9 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
             // a minimum of 333 extra us to send a report every time it's polled, but it
             // works to our advantage.
             match input_consistency_mode {
-                InputConsistencyMode::SuperHack => {
-                    // In SuperHack mode, we send reports only if the state changes, but
-                    // in order to not mess up very fast inputs (like sticks travelling, for example),
-                    // we still need to "rate limit" the reports to every 8.33ms at most.
-                    // This does rate limit it to ~8.33ms fairly well, my only
-                    // gripe with it is that I hate it :)
-                    Timer::at(last_report_time + Duration::from_micros(8100)).await;
-                }
-                InputConsistencyMode::ConsistencyHack => {
-                    // Ticker better maintains a consistent interval than Timer, so
-                    // we prefer it for consistency mode, where we send reports regularly.
-                    ticker.next().await;
+                InputConsistencyMode::SuperHack | InputConsistencyMode::ConsistencyHack => {
+                    // "Ticker at home", so we can use this for both consistency and SuperHack mode
+                    Timer::at(rate_limit_end_time).await;
                 }
                 InputConsistencyMode::Original => {}
             }
@@ -404,12 +395,10 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
                     let polltime = currtime.duration_since(last_report_time);
                     let micros = polltime.as_micros();
                     debug!("Report written in {}us", micros);
-                    // If we're sending reports too fast in regular consistency mode, reset the ticker.
-                    // This might happen right after plug-in, or after suspend.
-                    if input_consistency_mode == InputConsistencyMode::ConsistencyHack
-                        && micros < 8150
-                    {
-                        ticker.reset()
+                    if input_consistency_mode != InputConsistencyMode::Original {
+                        while rate_limit_end_time < currtime {
+                            rate_limit_end_time += Duration::from_micros(8333);
+                        }
                     }
                     last_report_time = currtime;
                 }
