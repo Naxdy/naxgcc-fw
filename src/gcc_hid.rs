@@ -302,6 +302,7 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
         InputConsistencyMode::Original => "NaxGCC (OG Mode)",
         InputConsistencyMode::ConsistencyHack => "NaxGCC (Consistency Mode)",
         InputConsistencyMode::SuperHack => "NaxGCC (SuperHack Mode)",
+        InputConsistencyMode::PC => "NaxGCC (PC Mode)",
     });
     usb_config.serial_number = Some(serial);
     usb_config.max_power = 200;
@@ -338,7 +339,12 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
     let hid_config = embassy_usb::class::hid::Config {
         report_descriptor: GCC_REPORT_DESCRIPTOR,
         request_handler: Some(&request_handler),
-        poll_ms: 1,
+        poll_ms: match input_consistency_mode {
+            InputConsistencyMode::Original => 8,
+            InputConsistencyMode::ConsistencyHack
+            | InputConsistencyMode::SuperHack
+            | InputConsistencyMode::PC => 1,
+        },
         max_packet_size_in: 37,
         max_packet_size_out: 5,
     };
@@ -378,7 +384,7 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
                     // "Ticker at home", so we can use this for both consistency and SuperHack mode
                     Timer::at(rate_limit_end_time).await;
                 }
-                InputConsistencyMode::Original => {}
+                InputConsistencyMode::Original | InputConsistencyMode::PC => {}
             }
 
             match writer
@@ -395,7 +401,9 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
                     let polltime = currtime.duration_since(last_report_time);
                     let micros = polltime.as_micros();
                     debug!("Report written in {}us", micros);
-                    if input_consistency_mode != InputConsistencyMode::Original {
+                    if input_consistency_mode != InputConsistencyMode::Original
+                        && input_consistency_mode != InputConsistencyMode::PC
+                    {
                         while rate_limit_end_time < currtime {
                             rate_limit_end_time += Duration::from_micros(8333);
                         }

@@ -558,6 +558,9 @@ pub enum InputConsistencyMode {
     /// to something your opponent does.
     /// The name is not meant to imply that this is a hack that is super, but rather that this is super hacky.
     SuperHack = 2,
+    /// Transmit inputs every 1 ms, for use on PC or other devices that are not garbage.
+    /// This is not recommended for use on the Switch!
+    PC = 3,
 }
 
 #[derive(Debug, Clone, Format, PackedStruct)]
@@ -1689,7 +1692,8 @@ async fn configuration_main_loop<
             // input consistency toggle
             37 => {
                 final_config.input_consistency_mode = match final_config.input_consistency_mode {
-                    InputConsistencyMode::Original => InputConsistencyMode::ConsistencyHack,
+                    InputConsistencyMode::Original => InputConsistencyMode::PC,
+                    InputConsistencyMode::PC => InputConsistencyMode::ConsistencyHack,
                     InputConsistencyMode::ConsistencyHack => InputConsistencyMode::SuperHack,
                     InputConsistencyMode::SuperHack => InputConsistencyMode::Original,
                 };
@@ -1713,6 +1717,7 @@ async fn configuration_main_loop<
                         stick_y: (127_i8
                             + match final_config.input_consistency_mode {
                                 InputConsistencyMode::Original => -69,
+                                InputConsistencyMode::PC => -42,
                                 InputConsistencyMode::ConsistencyHack => 42,
                                 InputConsistencyMode::SuperHack => 69,
                             }) as u8,
