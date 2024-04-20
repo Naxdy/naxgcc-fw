@@ -34,7 +34,7 @@ use embassy_sync::{
     pubsub::Subscriber,
     signal::Signal,
 };
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::Timer;
 
 use crate::{gcc_hid::GcReport, input::CHANNEL_GCC_STATE};
 
@@ -1057,8 +1057,6 @@ impl<'a> StickCalibrationProcess<'a> {
 
                 Timer::after_millis(100).await;
 
-                let mut ticker = Ticker::every(Duration::from_millis(20));
-
                 let notch_idx = NOTCH_ADJUSTMENT_ORDER
                     [self.calibration_step as usize - NO_OF_CALIBRATION_POINTS];
 
@@ -1100,7 +1098,7 @@ impl<'a> StickCalibrationProcess<'a> {
                         None => self.adjust_notch(NotchAdjustmentType::None),
                     };
 
-                    ticker.next().await;
+                    Timer::after_millis(1).await;
                     yield_now().await;
                 }
             };
