@@ -17,6 +17,7 @@ use embassy_time::{Duration, Instant, Timer};
 use embassy_usb::{
     class::hid::{HidReaderWriter, ReportId, RequestHandler, State},
     control::OutResponse,
+    msos::{self, windows_version},
     Builder, Handler,
 };
 use libm::powf;
@@ -35,6 +36,9 @@ pub static MUTEX_INPUT_CONSISTENCY_MODE: Mutex<
     CriticalSectionRawMutex,
     Option<InputConsistencyMode>,
 > = Mutex::new(None);
+
+/// Vendor-defined property data
+const DEVICE_INTERFACE_GUID: &str = "{ecceff35-146c-4ff3-acd9-8f992d09acdd}";
 
 #[rustfmt::skip]
 pub const GCC_REPORT_DESCRIPTOR: &[u8] = &[
@@ -333,6 +337,15 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: Driver<'static, USB>
         &mut msos_descriptor,
         &mut control_buf,
     );
+
+    builder.msos_descriptor(windows_version::WIN8_1, 2);
+
+    let msos_writer = builder.msos_writer();
+    msos_writer.device_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+    msos_writer.device_feature(msos::RegistryPropertyFeatureDescriptor::new(
+        "DeviceInterfaceGUID",
+        msos::PropertyData::Sz(DEVICE_INTERFACE_GUID),
+    ));
 
     builder.handler(&mut device_handler);
 
