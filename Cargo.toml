@@ -1,6 +1,6 @@
 [package]
 name = "naxgcc-fw"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -58,7 +58,7 @@ codegen-units = 1
 debug = 2
 debug-assertions = true
 incremental = false
-opt-level = 2
+opt-level = 's'
 lto = "fat"
 overflow-checks = true
 
@@ -71,7 +71,7 @@ incremental = false
 lto = 'fat'
 # opt level needs to be benchmarked after every major feature
 # due to the changes in binary size and alignment
-opt-level = 2
+opt-level = 's'
 overflow-checks = false
 
 # do not optimize proc-macro crates = faster builds from scratch
