@@ -82,6 +82,7 @@ pub enum StickAxis {
     YAxis,
 }
 
+#[inline(never)]
 #[link_section = ".time_critical.read_ext_adc"]
 pub fn read_ext_adc<
     'a,
@@ -125,6 +126,7 @@ pub fn read_ext_adc<
 /// Gets the average stick state over a 1ms interval in a non-blocking fashion.
 /// Will wait until end_time is reached before continuing after reading the ADCs.
 #[allow(clippy::too_many_arguments)]
+#[inline(never)]
 #[link_section = ".time_critical.update_stick_states"]
 async fn update_stick_states(
     current_stick_state: &StickState,
@@ -540,6 +542,7 @@ pub async fn update_button_state_task(
 ///
 /// Has to run on core0 because it makes use of SPI0.
 #[embassy_executor::task]
+#[inline(never)]
 #[link_section = ".time_critical.update_stick_states_task"]
 pub async fn update_stick_states_task(
     spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,

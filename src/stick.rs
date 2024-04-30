@@ -882,6 +882,7 @@ pub fn calc_stick_values(angle: f32) -> (f32, f32) {
     (x, y)
 }
 
+#[inline(never)]
 #[link_section = ".time_critical.linearize"]
 pub fn linearize(point: f32, coefficients: &[f32; NUM_COEFFS]) -> f32 {
     coefficients[0] * (point * point * point)
@@ -890,6 +891,7 @@ pub fn linearize(point: f32, coefficients: &[f32; NUM_COEFFS]) -> f32 {
         + coefficients[3]
 }
 
+#[inline(never)]
 #[link_section = ".time_critical.notch_remap"]
 pub fn notch_remap(
     x_in: f32,
