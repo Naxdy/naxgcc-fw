@@ -7,6 +7,10 @@ use crate::{
 
 /**
  * Houses functionality for modifying GCC state before it is sent to the console.
+ *
+ * General info for implementing filters on the sticks:
+ * X and Y values of a stick go each from 0 to 255.
+ * 127.5 is the middle value and when both X and Y are 127.5 the stick is in neutral position.
  */
 
 pub trait InputFilter: Sized {
@@ -95,6 +99,33 @@ impl InputFilter for CStickUpTiltFilter {
             } else if (53..=117).contains(&gcc_state.cstick_x) {
                 gcc_state.cstick_x = 33;
                 gcc_state.cstick_y = 0;
+            }
+        }
+    }
+}
+
+/// Improves hitting up/down angled forward tilt at the cost
+/// of making it impossible to hit turnaround up & down tilt
+/// and making it slightly harder to hit regular forward tilt.
+pub struct CStickAngledFTiltFilter;
+
+impl InputFilter for CStickAngledFTiltFilter {
+    fn apply_filter(&mut self, gcc_state: &mut GcReport) {
+        if gcc_state.cstick_y > 147 {
+            if (147..=225).contains(&gcc_state.cstick_x) {
+                gcc_state.cstick_x = 205;
+                gcc_state.cstick_y = 205;
+            } else if (30..=107).contains(&gcc_state.cstick_x) {
+                gcc_state.cstick_x = 50;
+                gcc_state.cstick_y = 205;
+            }
+        } else if gcc_state.cstick_y < 107 {
+            if (147..=225).contains(&gcc_state.cstick_x) {
+                gcc_state.cstick_x = 205;
+                gcc_state.cstick_y = 50;
+            } else if (30..=107).contains(&gcc_state.cstick_x) {
+                gcc_state.cstick_x = 50;
+                gcc_state.cstick_y = 50;
             }
         }
     }
