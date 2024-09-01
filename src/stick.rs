@@ -32,12 +32,14 @@ pub const NOTCH_ADJUSTMENT_ORDER: [usize; NO_OF_ADJ_NOTCHES] = [2,           6, 
 
 #[derive(Clone, Debug, Default, Format)]
 pub struct StickParams {
-    // these are the linearization coefficients
+    /// these are the linearization coefficients
     pub fit_coeffs: XyValuePair<[f32; NUM_COEFFS]>,
 
     // these are the notch remap parameters
-    pub affine_coeffs: [[f32; 4]; 16], // affine transformation coefficients for all regions of the stick
-    pub boundary_angles: [f32; 16], // angles at the boundaries between regions of the stick (in the plane)
+    /// affine transformation coefficients for all regions of the stick
+    pub affine_coeffs: [[f32; 4]; 16],
+    /// angles at the boundaries between regions of the stick (in the plane)
+    pub boundary_angles: [f32; 16],
 }
 
 impl From<&StickConfig> for StickParams {
