@@ -538,7 +538,7 @@ pub async fn update_button_state_task(
 }
 
 /// Task responsible for updating the stick states.
-/// Publishes the result to STICK_SIGNAL.
+/// Publishes the result to SIGNAL_STICK_STATE.
 ///
 /// Has to run on core0 because it makes use of SPI0.
 #[embassy_executor::task]
@@ -616,6 +616,7 @@ pub async fn update_stick_states_task(
 
         SIGNAL_STICK_STATE.signal(current_stick_state.clone());
 
+        // the yield_now is in case we took too long for the ticker
         yield_now().await;
         ticker.next().await;
 
