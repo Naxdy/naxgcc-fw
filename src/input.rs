@@ -561,8 +561,8 @@ pub async fn update_stick_states_task(
 
     let mut controller_config = SIGNAL_CONFIG_CHANGE.wait().await;
 
-    let mut controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
-    let mut cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
+    let mut controlstick_params = StickParams::from(&controller_config.astick_config);
+    let mut cstick_params = StickParams::from(&controller_config.cstick_config);
     let mut filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
 
     let mut current_stick_state = StickState {
@@ -627,8 +627,8 @@ pub async fn update_stick_states_task(
 
         if let Some(new_config) = SIGNAL_CONFIG_CHANGE.try_take() {
             controller_config = new_config;
-            controlstick_params = StickParams::from_stick_config(&controller_config.astick_config);
-            cstick_params = StickParams::from_stick_config(&controller_config.cstick_config);
+            controlstick_params = StickParams::from(&controller_config.astick_config);
+            cstick_params = StickParams::from(&controller_config.cstick_config);
             filter_gains = FILTER_GAINS.get_normalized_gains(&controller_config);
 
             info!("Controlstick params: {:?}", controlstick_params);
