@@ -40,9 +40,9 @@ pub struct StickParams {
     pub boundary_angles: [f32; 16], // angles at the boundaries between regions of the stick (in the plane)
 }
 
-impl StickParams {
-    /// Generate StickParams structs for the sticks, returned as a tuple of (analog_stick, c_stick)
-    pub fn from_stick_config(stick_config: &StickConfig) -> Self {
+impl From<&StickConfig> for StickParams {
+    /// Generate a StickParam struct from a stick config
+    fn from(stick_config: &StickConfig) -> Self {
         let cleaned_cal_points = CleanedCalibrationPoints::from_temp_calibration_points(
             stick_config.cal_points_x.to_regular_array(),
             stick_config.cal_points_y.to_regular_array(),
@@ -427,7 +427,7 @@ impl AppliedCalibration {
         cal_points_y: &[f32; NO_OF_CALIBRATION_POINTS],
         stick_config: &StickConfig,
     ) -> Self {
-        let mut stick_params = StickParams::from_stick_config(stick_config);
+        let mut stick_params = StickParams::from(stick_config);
 
         let (stripped_cal_points_x, stripped_cal_points_y) =
             strip_cal_points(cal_points_x, cal_points_y);
