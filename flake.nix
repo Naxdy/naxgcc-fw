@@ -2,16 +2,11 @@
   description = "Firmware for the NaxGCC";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-23.11";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-24.05";
 
     rust-overlay.url = "github:oxalica/rust-overlay";
 
     flake-utils.url = "github:numtide/flake-utils";
-
-    embassy-rs-patched = {
-      url = "git+https://gitea@git.naxdy.org/NaxdyOrg/embassy?ref=naxgcc-fw";
-      flake = false;
-    };
 
     naersk = {
       url = "github:nmattia/naersk";
@@ -25,7 +20,6 @@
     , rust-overlay
     , flake-utils
     , naersk
-    , embassy-rs-patched
     }: (flake-utils.lib.eachDefaultSystem (system:
     let
       pkgs = import nixpkgs {
@@ -51,12 +45,6 @@
       };
 
       CARGO_BUILD_TARGET = "thumbv6m-none-eabi";
-
-      prepCmd = ''
-        mkdir -p lib
-        rm lib/embassy-rs || true
-        ln -s "${embassy-rs-patched}" lib/embassy-rs
-      '';
     in
     {
       packages.default = self.packages.${system}.naxgcc-fw-uf2;
@@ -66,20 +54,26 @@
         ${pkgs.elf2uf2-rs}/bin/elf2uf2-rs ${self.packages.${system}.naxgcc-fw}/bin/${self.packages.${system}.naxgcc-fw.pname} $out/bin/${self.packages.${system}.naxgcc-fw.pname}.uf2
       '';
 
-      packages.naxgcc-fw = naersk_lib.buildPackage {
-        pname = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.name;
-        version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+      packages.naxgcc-fw = pkgs.callPackage
+        ({ mode ? "build" }: naersk_lib.buildPackage {
+          pname = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.name;
+          version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
 
-        prePatch = prepCmd;
+          inherit mode;
 
-        src = self;
+          src = self;
 
-        cargoBuildOptions = _orig: _orig ++ [
-          "--target=${CARGO_BUILD_TARGET}"
-        ];
+          cargoBuildOptions = _orig: _orig ++ [
+            "--target=${CARGO_BUILD_TARGET}"
+          ];
 
-        # if a tree falls in the forest and no one is around to hear it, does it make a sound?
-        DEFMT_LOG = "off";
+          # if a tree falls in the forest and no one is around to hear it, does it make a sound?
+          DEFMT_LOG = "off";
+        })
+        { };
+
+      packages.clippy = self.packages.${system}.naxgcc-fw.override {
+        mode = "clippy";
       };
 
       devShells.default = pkgs.mkShell {
@@ -92,8 +86,6 @@
         DEFMT_LOG = "debug";
 
         inherit CARGO_BUILD_TARGET;
-
-        shellHook = prepCmd;
       };
     }));
 }

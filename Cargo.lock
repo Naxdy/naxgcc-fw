@@ -3,6 +3,18 @@
 version = 3
 
 [[package]]
+name = "ahash"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e89da841a80418a9b391ebaea17f5c112ffaaa96f621d2c285b5174da76b9011"
+dependencies = [
+ "cfg-if",
+ "once_cell",
+ "version_check",
+ "zerocopy",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -78,6 +90,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46afbd2983a5d5a7bd740ccb198caf5b82f45c40c09c0eed36052d91cb92e719"
 
 [[package]]
+name = "bitfield"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d7e60934ceec538daadb9d8432424ed043a904d8e0243f3c6446bce549a46ac"
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -109,9 +127,9 @@ checksum = "a2ef034f05691a48569bd920a96c81b9d91bbad1ab5ac7c4616c1f6ef36cb79f"
 
 [[package]]
 name = "byteorder"
-version = "1.4.3"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "cfg-if"
@@ -136,7 +154,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ec610d8f49840a5b376c69663b6369e71f4b34484b9b2eb29fb918d92516cb9"
 dependencies = [
  "bare-metal",
- "bitfield",
+ "bitfield 0.13.2",
  "embedded-hal 0.2.7",
  "volatile-register",
 ]
@@ -309,7 +327,8 @@ checksum = "11157ac094ffbdde99aa67b23417ebdd801842852b500e395a45a9c0aac03e4a"
 
 [[package]]
 name = "embassy-embedded-hal"
-version = "0.1.0"
+version = "0.2.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "defmt",
  "embassy-futures",
@@ -325,7 +344,8 @@ dependencies = [
 
 [[package]]
 name = "embassy-executor"
-version = "0.5.0"
+version = "0.6.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "cortex-m",
  "critical-section",
@@ -338,7 +358,8 @@ dependencies = [
 
 [[package]]
 name = "embassy-executor-macros"
-version = "0.4.0"
+version = "0.5.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -349,13 +370,15 @@ dependencies = [
 [[package]]
 name = "embassy-futures"
 version = "0.1.1"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "defmt",
 ]
 
 [[package]]
 name = "embassy-hal-internal"
-version = "0.1.0"
+version = "0.2.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "cortex-m",
  "critical-section",
@@ -366,10 +389,12 @@ dependencies = [
 [[package]]
 name = "embassy-net-driver"
 version = "0.2.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 
 [[package]]
 name = "embassy-net-driver-channel"
-version = "0.2.0"
+version = "0.3.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "embassy-futures",
  "embassy-net-driver",
@@ -378,7 +403,8 @@ dependencies = [
 
 [[package]]
 name = "embassy-rp"
-version = "0.1.0"
+version = "0.2.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "atomic-polyfill",
  "cfg-if",
@@ -403,7 +429,6 @@ dependencies = [
  "embedded-storage",
  "embedded-storage-async",
  "fixed",
- "futures",
  "nb 1.1.0",
  "pio",
  "pio-proc",
@@ -414,7 +439,8 @@ dependencies = [
 
 [[package]]
 name = "embassy-sync"
-version = "0.5.0"
+version = "0.6.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -426,7 +452,8 @@ dependencies = [
 
 [[package]]
 name = "embassy-time"
-version = "0.3.0"
+version = "0.3.2"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -444,6 +471,7 @@ dependencies = [
 [[package]]
 name = "embassy-time-driver"
 version = "0.1.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "document-features",
 ]
@@ -451,10 +479,12 @@ dependencies = [
 [[package]]
 name = "embassy-time-queue-driver"
 version = "0.1.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 
 [[package]]
 name = "embassy-usb"
-version = "0.1.0"
+version = "0.3.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "defmt",
  "embassy-futures",
@@ -469,6 +499,7 @@ dependencies = [
 [[package]]
 name = "embassy-usb-driver"
 version = "0.1.0"
+source = "git+https://git.naxdy.org/NaxdyOrg/embassy.git?branch=naxgcc-fw#16151cce0271573a66206aa6e85932c20bbf0c70"
 dependencies = [
  "defmt",
 ]
@@ -631,57 +662,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
-name = "futures"
-version = "0.3.30"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "645c6916888f6cb6350d2550b80fb63e734897a8498abe35cfb732b6487804b0"
-dependencies = [
- "futures-channel",
- "futures-core",
- "futures-io",
- "futures-sink",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
-name = "futures-channel"
-version = "0.3.30"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eac8f7d7865dcb88bd4373ab671c8cf4508703796caa2b1985a9ca867b3fcb78"
-dependencies = [
- "futures-core",
- "futures-sink",
-]
-
-[[package]]
 name = "futures-core"
 version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfc6580bb841c5a68e9ef15c77ccc837b40a7504914d52e47b8b0e9bbda25a1d"
-
-[[package]]
-name = "futures-io"
-version = "0.3.30"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a44623e20b9681a318efdd71c299b6b222ed6f231972bfe2f224ebad6311f0c1"
-
-[[package]]
-name = "futures-macro"
-version = "0.3.30"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87750cf4b7a4c0625b1529e4c543c2182106e4dedc60a2a6455e00d212c489ac"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.52",
-]
-
-[[package]]
-name = "futures-sink"
-version = "0.3.30"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fb8e00e87438d937621c1c6269e53f536c14d3fbd6a042bb24879e57d474fb5"
 
 [[package]]
 name = "futures-task"
@@ -696,8 +680,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d6401deb83407ab3da39eba7e33987a73c3df0c82b4bb5813ee871c19c41d48"
 dependencies = [
  "futures-core",
- "futures-macro",
- "futures-sink",
  "futures-task",
  "pin-project-lite",
  "pin-utils",
@@ -735,6 +717,15 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
+dependencies = [
+ "ahash",
+]
+
+[[package]]
+name = "hashbrown"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "290f1a1d9242c78d09ce40a5e87e7554ee637af1351968159f4952f028f75604"
@@ -768,7 +759,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b0b929d511467233429c45a44ac1dcaa21ba0f5ba11e4879e6ed28ddb4f9df4"
 dependencies = [
  "equivalent",
- "hashbrown",
+ "hashbrown 0.14.3",
 ]
 
 [[package]]
@@ -875,7 +866,7 @@ checksum = "523dc4f511e55ab87b694dc30d0f820d60906ef06413f93d4d7a1385599cc149"
 
 [[package]]
 name = "naxgcc-fw"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -1453,15 +1444,19 @@ checksum = "f962df74c8c05a667b5ee8bcf162993134c104e96440b663c8daa176dc772d8c"
 
 [[package]]
 name = "usb-device"
-version = "0.2.9"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f6cc3adc849b5292b4075fc0d5fdcf2f24866e88e336dd27a8943090a520508"
+checksum = "98816b1accafbb09085168b90f27e93d790b4bfa19d883466b5e53315b5f06a6"
+dependencies = [
+ "heapless",
+ "portable-atomic",
+]
 
 [[package]]
 name = "usbd-hid"
-version = "0.6.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "975bd411f4a939986751ea09992a24fa47c4d25c6ed108d04b4c2999a4fd0132"
+checksum = "e6f291ab53d428685cc780f08a2eb9d5d6ff58622db2b36e239a4f715f1e184c"
 dependencies = [
  "serde",
  "ssmarshal",
@@ -1471,20 +1466,22 @@ dependencies = [
 
 [[package]]
 name = "usbd-hid-descriptors"
-version = "0.1.2"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcbee8c6735e90894fba04770bc41e11fd3c5256018856e15dc4dd1e6c8a3dd1"
+checksum = "0eee54712c5d778d2fb2da43b1ce5a7b5060886ef7b09891baeb4bf36910a3ed"
 dependencies = [
- "bitfield",
+ "bitfield 0.14.0",
 ]
 
 [[package]]
 name = "usbd-hid-macros"
-version = "0.6.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "261079a9ada015fa1acac7cc73c98559f3a92585e15f508034beccf6a2ab75a2"
+checksum = "bb573c76e7884035ac5e1ab4a81234c187a82b6100140af0ab45757650ccda38"
 dependencies = [
  "byteorder",
+ "hashbrown 0.13.2",
+ "log",
  "proc-macro2",
  "quote",
  "serde",
@@ -1686,4 +1683,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
+]
+
+[[package]]
+name = "zerocopy"
+version = "0.7.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b9b4fd18abc82b8136838da5d50bae7bdea537c574d8dc1a34ed098d6c166f0"
+dependencies = [
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.7.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.52",
 ]

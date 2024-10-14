@@ -1,19 +1,18 @@
-//! This example test the RP Pico on board LED.
-//!
-//! It does not work with the RP Pico W board. See wifi_blinky.rs.
-
 #![no_std]
 #![no_main]
 mod config;
 mod filter;
-mod gcc_hid;
 mod helpers;
+mod hid;
 mod input;
 mod input_filter;
 mod stick;
+mod usb_comms;
+
+use core::ptr::addr_of_mut;
 
 use config::config_task;
-use defmt::{debug, info};
+use defmt::info;
 use embassy_executor::Executor;
 use embassy_rp::{
     bind_interrupts,
@@ -24,14 +23,14 @@ use embassy_rp::{
     spi::{self, Spi},
     usb::{Driver, InterruptHandler},
 };
-use gcc_hid::usb_transfer_task;
 use gpio::{Level, Output};
+use usb_comms::usb_transfer_task;
 
 use input::{update_button_state_task, update_stick_states_task};
 use static_cell::StaticCell;
 
 use crate::config::enter_config_mode_task;
-use crate::gcc_hid::rumble_task;
+use crate::usb_comms::rumble_task;
 
 use {defmt_rtt as _, panic_probe as _};
 
@@ -75,34 +74,37 @@ fn main() -> ! {
     let spi_acs = Output::new(AnyPin::from(p_acs), Level::High); // active low
     let spi_ccs = Output::new(AnyPin::from(p_ccs), Level::High); // active low
 
-    spawn_core1(p.CORE1, unsafe { &mut CORE1_STACK }, move || {
-        let executor1 = EXECUTOR1.init(Executor::new());
-        debug!("Mana");
-        executor1.run(|spawner| {
-            spawner.spawn(usb_transfer_task(uid, driver)).unwrap();
-            spawner.spawn(enter_config_mode_task()).unwrap();
-            spawner
-                .spawn(rumble_task(p.PIN_25, p.PIN_29, p.PWM_CH4, p.PWM_CH6))
-                .unwrap();
-            // spawner.spawn(input_integrity_benchmark()).unwrap();
-            spawner
-                .spawn(update_button_state_task(
-                    Input::new(AnyPin::from(p.PIN_20), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_17), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_16), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_11), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_9), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_10), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_8), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_22), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_21), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_18), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_19), gpio::Pull::Up),
-                    Input::new(AnyPin::from(p.PIN_5), gpio::Pull::Up),
-                ))
-                .unwrap()
-        });
-    });
+    spawn_core1(
+        p.CORE1,
+        unsafe { addr_of_mut!(CORE1_STACK).as_mut().unwrap() },
+        move || {
+            let executor1 = EXECUTOR1.init(Executor::new());
+            executor1.run(|spawner| {
+                spawner.spawn(usb_transfer_task(uid, driver)).unwrap();
+                spawner.spawn(enter_config_mode_task()).unwrap();
+                spawner
+                    .spawn(rumble_task(p.PIN_25, p.PIN_29, p.PWM_SLICE4, p.PWM_SLICE6))
+                    .unwrap();
+                // spawner.spawn(input_integrity_benchmark()).unwrap();
+                spawner
+                    .spawn(update_button_state_task(
+                        Input::new(AnyPin::from(p.PIN_20), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_17), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_16), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_11), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_9), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_10), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_8), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_22), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_21), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_18), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_19), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_5), gpio::Pull::Up),
+                    ))
+                    .unwrap()
+            });
+        },
+    );
 
     let executor0 = EXECUTOR0.init(Executor::new());
     info!("Initialized.");

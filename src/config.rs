@@ -16,8 +16,8 @@ use packed_struct::{
 };
 
 use crate::{
-    gcc_hid::{Buttons1, Buttons2, MUTEX_INPUT_CONSISTENCY_MODE, SIGNAL_CHANGE_RUMBLE_STRENGTH},
     helpers::{PackedFloat, ToPackedFloatArray, ToRegularArray, XyValuePair},
+    hid::gcc::{GcButtons1, GcButtons2, GcState},
     input::{
         read_ext_adc, Stick, StickAxis, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED, SPI_SHARED,
     },
@@ -26,6 +26,7 @@ use crate::{
         LinearizedCalibration, NotchCalibration, NotchStatus, CALIBRATION_ORDER,
         NOTCH_ADJUSTMENT_ORDER, NO_OF_ADJ_NOTCHES, NO_OF_CALIBRATION_POINTS, NO_OF_NOTCHES,
     },
+    usb_comms::{MUTEX_INPUT_CONSISTENCY_MODE, SIGNAL_CHANGE_RUMBLE_STRENGTH},
     ADDR_OFFSET, FLASH_SIZE,
 };
 
@@ -36,7 +37,7 @@ use embassy_sync::{
 };
 use embassy_time::Timer;
 
-use crate::{gcc_hid::GcReport, input::CHANNEL_GCC_STATE};
+use crate::input::CHANNEL_GCC_STATE;
 
 /// Whether we are currently calibrating the sticks. Updates are dispatched when the status changes.
 /// Initial status is assumed to be false.
@@ -78,7 +79,7 @@ const MAX_ANALOG_SCALER: u8 = 125;
 /// a certain mode.
 #[derive(Default, Debug, Clone, Format)]
 pub struct OverrideGcReportInstruction {
-    pub report: GcReport,
+    pub report: GcState,
     pub duration_ms: u64,
 }
 
@@ -563,6 +564,15 @@ pub enum InputConsistencyMode {
     PC = 3,
 }
 
+/// Not saved, but set upon plugging in the controller.
+#[derive(Debug, Clone, Copy, Format, PrimitiveEnum_u8, PartialEq, Eq)]
+pub enum ControllerMode {
+    /// Advertise itself as a GCC adapter with 1 controller (itself) connected.
+    GcAdapter = 0,
+    /// Pretend to be a Nintendo Switch Pro Controller connected via USB.
+    Procon = 1,
+}
+
 #[derive(Debug, Clone, Format, PackedStruct)]
 #[packed_struct(endian = "msb")]
 pub struct ControllerConfig {
@@ -637,6 +647,8 @@ impl ControllerConfig {
 /// Trait for providing button presses, used in the calibration process.
 trait ButtonPressProvider {
     /// Wait for a single button press.
+    // TODO: remove allow once this is used somewhere
+    #[allow(dead_code)]
     async fn wait_for_button_press(&mut self, button_to_wait_for: &AwaitableButtons);
 
     /// Wait for a single button release.
@@ -670,7 +682,7 @@ trait ButtonPressProvider {
 }
 
 impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> ButtonPressProvider
-    for Subscriber<'a, T, GcReport, I, J, K>
+    for Subscriber<'a, T, GcState, I, J, K>
 {
     async fn wait_for_button_press(&mut self, button_to_wait_for: &AwaitableButtons) {
         loop {
@@ -770,7 +782,7 @@ impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> ButtonPres
 }
 
 pub fn is_awaitable_button_pressed(
-    report: &GcReport,
+    report: &GcState,
     button_to_wait_for: &AwaitableButtons,
 ) -> bool {
     match button_to_wait_for {
@@ -1136,7 +1148,7 @@ async fn configuration_main_loop<
 >(
     current_config: &ControllerConfig,
     flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
-    gcc_subscriber: &mut Subscriber<'a, M, GcReport, C, S, P>,
+    gcc_subscriber: &mut Subscriber<'a, M, GcState, C, S, P>,
 ) -> ControllerConfig {
     let mut final_config = current_config.clone();
     let config_options = [
@@ -1194,15 +1206,15 @@ async fn configuration_main_loop<
             // exit
             0 => {
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1222,15 +1234,15 @@ async fn configuration_main_loop<
             // calibrate lstick
             1 => {
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1251,15 +1263,15 @@ async fn configuration_main_loop<
             // calibrate rstick
             2 => {
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1310,15 +1322,15 @@ async fn configuration_main_loop<
                 .clamp(-ABS_MAX_SNAPBACK, ABS_MAX_SNAPBACK);
 
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1396,15 +1408,15 @@ async fn configuration_main_loop<
                 .clamp(0, MAX_WAVESHAPING) as u8;
 
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1482,15 +1494,15 @@ async fn configuration_main_loop<
                 .clamp(0, MAX_SMOOTHING) as u8;
 
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1557,15 +1569,15 @@ async fn configuration_main_loop<
                 .clamp(-1, MAX_CARDINAL_SNAP);
 
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1613,15 +1625,15 @@ async fn configuration_main_loop<
                     as u8;
 
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1661,16 +1673,16 @@ async fn configuration_main_loop<
                 SIGNAL_CHANGE_RUMBLE_STRENGTH.signal(*to_adjust);
 
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             button_z: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1697,15 +1709,15 @@ async fn configuration_main_loop<
                 };
 
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1731,15 +1743,15 @@ async fn configuration_main_loop<
             // display waveshaping values on both sticks
             38 => {
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1757,15 +1769,15 @@ async fn configuration_main_loop<
             // display stick smoothing values on both sticks
             39 => {
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1783,15 +1795,15 @@ async fn configuration_main_loop<
             // display snapback values on both sticks
             40 => {
                 override_gcc_state_and_wait(&OverrideGcReportInstruction {
-                    report: GcReport {
+                    report: GcState {
                         trigger_r: 255,
                         trigger_l: 255,
-                        buttons_2: Buttons2 {
+                        buttons_2: GcButtons2 {
                             button_r: true,
                             button_l: true,
                             ..Default::default()
                         },
-                        buttons_1: Buttons1 {
+                        buttons_1: GcButtons1 {
                             button_x: true,
                             button_y: true,
                             button_a: true,
@@ -1854,15 +1866,15 @@ pub async fn config_task(mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>) {
         info!("Entering config mode.");
 
         override_gcc_state_and_wait(&OverrideGcReportInstruction {
-            report: GcReport {
+            report: GcState {
                 trigger_r: 255,
                 trigger_l: 255,
-                buttons_2: Buttons2 {
+                buttons_2: GcButtons2 {
                     button_l: true,
                     button_r: true,
                     ..Default::default()
                 },
-                buttons_1: Buttons1 {
+                buttons_1: GcButtons1 {
                     button_x: true,
                     button_y: true,
                     button_a: true,

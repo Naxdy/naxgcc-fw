@@ -2,7 +2,7 @@ use defmt::warn;
 
 use crate::{
     config::{is_awaitable_button_pressed, AwaitableButtons},
-    gcc_hid::GcReport,
+    hid::gcc::GcState,
 };
 
 /**
@@ -14,7 +14,7 @@ use crate::{
  */
 
 pub trait InputFilter: Sized {
-    fn apply_filter(&mut self, gcc_state: &mut GcReport);
+    fn apply_filter(&mut self, gcc_state: &mut GcState);
 }
 
 /// Presses a single button if another button is pressed.
@@ -26,7 +26,7 @@ pub struct SingleButtonMacroFilter {
 }
 
 impl InputFilter for SingleButtonMacroFilter {
-    fn apply_filter(&mut self, gcc_state: &mut GcReport) {
+    fn apply_filter(&mut self, gcc_state: &mut GcState) {
         if is_awaitable_button_pressed(gcc_state, &self.btn_instigator) {
             match self.btn_to_press {
                 AwaitableButtons::A => {
@@ -83,7 +83,7 @@ impl InputFilter for SingleButtonMacroFilter {
 pub struct CStickUpTiltFilter;
 
 impl InputFilter for CStickUpTiltFilter {
-    fn apply_filter(&mut self, gcc_state: &mut GcReport) {
+    fn apply_filter(&mut self, gcc_state: &mut GcState) {
         if gcc_state.cstick_y > 157 {
             if (137..=201).contains(&gcc_state.cstick_x) {
                 gcc_state.cstick_x = 201;
@@ -110,7 +110,7 @@ impl InputFilter for CStickUpTiltFilter {
 pub struct CStickAngledFTiltFilter;
 
 impl InputFilter for CStickAngledFTiltFilter {
-    fn apply_filter(&mut self, gcc_state: &mut GcReport) {
+    fn apply_filter(&mut self, gcc_state: &mut GcState) {
         if gcc_state.cstick_y > 147 {
             if (147..=225).contains(&gcc_state.cstick_x) {
                 gcc_state.cstick_x = 205;
@@ -136,5 +136,5 @@ impl InputFilter for CStickAngledFTiltFilter {
 pub struct DummyFilter;
 
 impl InputFilter for DummyFilter {
-    fn apply_filter(&mut self, _gcc_state: &mut GcReport) {}
+    fn apply_filter(&mut self, _gcc_state: &mut GcState) {}
 }

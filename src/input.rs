@@ -1,7 +1,7 @@
 use defmt::{debug, info, trace, Format};
 use embassy_futures::yield_now;
 use embassy_rp::{
-    gpio::{AnyPin, Input, Output, Pin},
+    gpio::{Input, Output},
     peripherals::SPI0,
     spi::{Blocking, Spi},
 };
@@ -16,19 +16,20 @@ use libm::{fmaxf, fminf};
 
 use crate::{
     config::{
-        ControllerConfig, InputConsistencyMode, OverrideGcReportInstruction, OverrideStickState,
-        SIGNAL_CONFIG_CHANGE, SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE,
+        ControllerConfig, ControllerMode, InputConsistencyMode, OverrideGcReportInstruction,
+        OverrideStickState, SIGNAL_CONFIG_CHANGE, SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE,
         SIGNAL_OVERRIDE_STICK_STATE,
     },
     filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
-    gcc_hid::{GcReport, MUTEX_INPUT_CONSISTENCY_MODE},
     helpers::XyValuePair,
+    hid::gcc::GcState,
     input_filter::{DummyFilter, InputFilter},
     stick::{linearize, notch_remap, StickParams},
+    usb_comms::{MUTEX_CONTROLLER_MODE, MUTEX_INPUT_CONSISTENCY_MODE},
 };
 
 /// Used to send the button state to the usb task and the calibration task
-pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcReport, 1, 4, 1> =
+pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcState, 1, 4, 1> =
     PubSubChannel::new();
 
 /// Used to send the stick state from the stick task to the main input task
@@ -36,10 +37,8 @@ static SIGNAL_STICK_STATE: Signal<CriticalSectionRawMutex, StickState> = Signal:
 
 pub static SPI_SHARED: Mutex<ThreadModeRawMutex, Option<Spi<'static, SPI0, Blocking>>> =
     Mutex::new(None);
-pub static SPI_ACS_SHARED: Mutex<ThreadModeRawMutex, Option<Output<'static, AnyPin>>> =
-    Mutex::new(None);
-pub static SPI_CCS_SHARED: Mutex<ThreadModeRawMutex, Option<Output<'static, AnyPin>>> =
-    Mutex::new(None);
+pub static SPI_ACS_SHARED: Mutex<ThreadModeRawMutex, Option<Output<'static>>> = Mutex::new(None);
+pub static SPI_CCS_SHARED: Mutex<ThreadModeRawMutex, Option<Output<'static>>> = Mutex::new(None);
 
 const STICK_HYST_VAL: f32 = 0.3;
 pub const FLOAT_ORIGIN: f32 = 127.5;
@@ -84,18 +83,12 @@ pub enum StickAxis {
 
 #[inline(never)]
 #[link_section = ".time_critical.read_ext_adc"]
-pub fn read_ext_adc<
-    'a,
-    Acs: Pin,
-    Ccs: Pin,
-    I: embassy_rp::spi::Instance,
-    M: embassy_rp::spi::Mode,
->(
+pub fn read_ext_adc<'a, I: embassy_rp::spi::Instance, M: embassy_rp::spi::Mode>(
     which_stick: Stick,
     which_axis: StickAxis,
     spi: &mut Spi<'a, I, M>,
-    spi_acs: &mut Output<'a, Acs>,
-    spi_ccs: &mut Output<'a, Ccs>,
+    spi_acs: &mut Output<'a>,
+    spi_ccs: &mut Output<'a>,
 ) -> u16 {
     let mut buf = [0b11010000; 3];
 
@@ -352,19 +345,19 @@ async fn update_stick_states(
 
 #[allow(clippy::too_many_arguments)]
 fn update_button_states(
-    gcc_state: &mut GcReport,
-    btn_a: &Input<'_, AnyPin>,
-    btn_b: &Input<'_, AnyPin>,
-    btn_x: &Input<'_, AnyPin>,
-    btn_y: &Input<'_, AnyPin>,
-    btn_start: &Input<'_, AnyPin>,
-    btn_l: &Input<'_, AnyPin>,
-    btn_r: &Input<'_, AnyPin>,
-    btn_z: &Input<'_, AnyPin>,
-    btn_dleft: &Input<'_, AnyPin>,
-    btn_dright: &Input<'_, AnyPin>,
-    btn_dup: &Input<'_, AnyPin>,
-    btn_ddown: &Input<'_, AnyPin>,
+    gcc_state: &mut GcState,
+    btn_a: &Input<'_>,
+    btn_b: &Input<'_>,
+    btn_x: &Input<'_>,
+    btn_y: &Input<'_>,
+    btn_start: &Input<'_>,
+    btn_l: &Input<'_>,
+    btn_r: &Input<'_>,
+    btn_z: &Input<'_>,
+    btn_dleft: &Input<'_>,
+    btn_dright: &Input<'_>,
+    btn_dup: &Input<'_>,
+    btn_ddown: &Input<'_>,
 ) {
     gcc_state.buttons_1.button_a = btn_a.is_low();
     gcc_state.buttons_1.button_b = btn_b.is_low();
@@ -393,7 +386,7 @@ pub async fn input_integrity_benchmark() {
     loop {
         SIGNAL_OVERRIDE_GCC_STATE.signal(OverrideGcReportInstruction {
             report: {
-                let mut report = GcReport::default();
+                let mut report = GcState::default();
                 report.buttons_1.dpad_up = true;
                 report
             },
@@ -409,18 +402,18 @@ pub async fn input_integrity_benchmark() {
 #[allow(clippy::too_many_arguments)]
 #[embassy_executor::task]
 pub async fn update_button_state_task(
-    btn_z: Input<'static, AnyPin>,
-    btn_a: Input<'static, AnyPin>,
-    btn_b: Input<'static, AnyPin>,
-    btn_dright: Input<'static, AnyPin>,
-    btn_dup: Input<'static, AnyPin>,
-    btn_ddown: Input<'static, AnyPin>,
-    btn_dleft: Input<'static, AnyPin>,
-    btn_l: Input<'static, AnyPin>,
-    btn_r: Input<'static, AnyPin>,
-    btn_x: Input<'static, AnyPin>,
-    btn_y: Input<'static, AnyPin>,
-    btn_start: Input<'static, AnyPin>,
+    btn_z: Input<'static>,
+    btn_a: Input<'static>,
+    btn_b: Input<'static>,
+    btn_dright: Input<'static>,
+    btn_dup: Input<'static>,
+    btn_ddown: Input<'static>,
+    btn_dleft: Input<'static>,
+    btn_l: Input<'static>,
+    btn_r: Input<'static>,
+    btn_x: Input<'static>,
+    btn_y: Input<'static>,
+    btn_start: Input<'static>,
 ) {
     // upon loop entry, we check for the reset combo once
     if btn_a.is_low() && btn_x.is_low() && btn_y.is_low() {
@@ -431,6 +424,15 @@ pub async fn update_button_state_task(
         loop {}
     }
 
+    {
+        let mut m = MUTEX_CONTROLLER_MODE.lock().await;
+        *m = if btn_start.is_low() {
+            Some(ControllerMode::Procon)
+        } else {
+            Some(ControllerMode::GcAdapter)
+        };
+    }
+
     let input_consistency_mode = {
         while MUTEX_INPUT_CONSISTENCY_MODE.lock().await.is_none() {
             Timer::after(Duration::from_millis(100)).await;
@@ -438,9 +440,9 @@ pub async fn update_button_state_task(
         MUTEX_INPUT_CONSISTENCY_MODE.lock().await.unwrap()
     };
 
-    let mut previous_state = GcReport::default();
+    let mut previous_state = GcState::default();
 
-    let mut gcc_state = GcReport::default();
+    let mut gcc_state = GcState::default();
 
     let gcc_publisher = CHANNEL_GCC_STATE.publisher().unwrap();
 
@@ -546,10 +548,13 @@ pub async fn update_button_state_task(
 #[link_section = ".time_critical.update_stick_states_task"]
 pub async fn update_stick_states_task(
     spi: Spi<'static, SPI0, embassy_rp::spi::Blocking>,
-    spi_acs: Output<'static, AnyPin>,
-    spi_ccs: Output<'static, AnyPin>,
+    spi_acs: Output<'static>,
+    spi_ccs: Output<'static>,
 ) {
-    Timer::after_secs(1).await;
+    // let some time pass before accepting stick inputs
+    // to ensure sticks are properly zeroed
+    Timer::after_secs(2).await;
+
     *SPI_SHARED.lock().await = Some(spi);
     *SPI_ACS_SHARED.lock().await = Some(spi_acs);
     *SPI_CCS_SHARED.lock().await = Some(spi_ccs);
@@ -608,7 +613,7 @@ pub async fn update_stick_states_task(
             let n = Instant::now();
 
             match (n - last_loop_time).as_micros() {
-                a if a > 1666 => debug!("Loop took {} us", a),
+                a if a > 800 => debug!("Loop took {} us", a),
                 _ => {}
             };
             last_loop_time = n;

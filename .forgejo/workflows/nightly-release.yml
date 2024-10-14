@@ -20,9 +20,15 @@ jobs:
           token: "${{ secrets.PUBLIC_BINARY_CACHE_AUTH_KEY }}"
           cache: "${{ vars.PUBLIC_BINARY_CACHE_NAME }}"
       - uses: actions/checkout@v4
+
+      - name: Run Clippy
+        run: |
+          nix build .#clippy --print-build-logs -j auto
+
       - name: Build firmware image
         run: |
           nix build .# -o dist --print-build-logs
+
       - name: (Re-)generate tag
         run: |
           git config --global user.email "noreply@naxdy.org"
@@ -32,6 +38,7 @@ jobs:
           git tag nightly -m "Nightly Release"
           git checkout nightly
           git push --set-upstream origin nightly --force
+          
       - name: Publish nightly release
         uses: https://gitea.com/actions/gitea-release-action@v1.3.0
         with:

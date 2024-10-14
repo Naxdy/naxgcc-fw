@@ -10,8 +10,19 @@ jobs:
   check:
     runs-on: nix-flakes
 
+    
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up attic binary cache
+        uses: https://git.naxdy.org/NaxdyOrg/attic-action@v0.3
+        with:
+          endpoint: "${{ vars.BINARY_CACHE_URL }}"
+          token: ""
+          cache: "${{ vars.PUBLIC_BINARY_CACHE_NAME }}"
+          skip-push: true
+
       - name: Run Clippy
         run: |
-          nix develop . --command cargo clippy -- -Dwarnings
+          nix build .#clippy --print-build-logs -j auto
