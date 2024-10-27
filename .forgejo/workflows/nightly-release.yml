@@ -21,9 +21,9 @@ jobs:
           cache: "${{ vars.PUBLIC_BINARY_CACHE_NAME }}"
       - uses: actions/checkout@v4
 
-      - name: Run Clippy
+      - name: Run flake checks
         run: |
-          nix build .#clippy --print-build-logs -j auto
+          nix flake check . --print-build-logs -j auto
 
       - name: Build firmware image
         run: |
@@ -38,7 +38,7 @@ jobs:
           git tag nightly -m "Nightly Release"
           git checkout nightly
           git push --set-upstream origin nightly --force
-          
+
       - name: Publish nightly release
         uses: https://gitea.com/actions/gitea-release-action@v1.3.0
         with:

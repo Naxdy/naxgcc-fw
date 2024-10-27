@@ -47,33 +47,37 @@
       CARGO_BUILD_TARGET = "thumbv6m-none-eabi";
     in
     {
-      packages.default = self.packages.${system}.naxgcc-fw-uf2;
+      packages = {
+        default = self.packages.${system}.naxgcc-fw-uf2;
 
-      packages.naxgcc-fw-uf2 = pkgs.runCommandLocal "${self.packages.${system}.naxgcc-fw.pname}-uf2-${self.packages.${system}.naxgcc-fw.version}" { } ''
-        mkdir -p $out/bin
-        ${pkgs.elf2uf2-rs}/bin/elf2uf2-rs ${self.packages.${system}.naxgcc-fw}/bin/${self.packages.${system}.naxgcc-fw.pname} $out/bin/${self.packages.${system}.naxgcc-fw.pname}.uf2
-      '';
+        naxgcc-fw-uf2 = pkgs.runCommandLocal "${self.packages.${system}.naxgcc-fw.pname}-uf2-${self.packages.${system}.naxgcc-fw.version}" { } ''
+          mkdir -p $out/bin
+          ${pkgs.elf2uf2-rs}/bin/elf2uf2-rs ${self.packages.${system}.naxgcc-fw}/bin/${self.packages.${system}.naxgcc-fw.pname} $out/bin/${self.packages.${system}.naxgcc-fw.pname}.uf2
+        '';
 
-      packages.naxgcc-fw = pkgs.callPackage
-        ({ mode ? "build" }: naersk_lib.buildPackage {
-          pname = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.name;
-          version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+        naxgcc-fw = pkgs.callPackage
+          ({ mode ? "build" }: naersk_lib.buildPackage {
+            pname = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.name;
+            version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
 
-          inherit mode;
+            inherit mode;
 
-          src = self;
+            src = self;
 
-          cargoBuildOptions = _orig: _orig ++ [
-            "--target=${CARGO_BUILD_TARGET}"
-          ];
+            cargoBuildOptions = _orig: _orig ++ [
+              "--target=${CARGO_BUILD_TARGET}"
+            ];
 
-          # if a tree falls in the forest and no one is around to hear it, does it make a sound?
-          DEFMT_LOG = "off";
-        })
-        { };
+            # if a tree falls in the forest and no one is around to hear it, does it make a sound?
+            DEFMT_LOG = "off";
+          })
+          { };
+      };
 
-      packages.clippy = self.packages.${system}.naxgcc-fw.override {
-        mode = "clippy";
+      checks = {
+        clippy = self.packages.${system}.naxgcc-fw.override {
+          mode = "clippy";
+        };
       };
 
       devShells.default = pkgs.mkShell {

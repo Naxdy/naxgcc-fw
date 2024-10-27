@@ -10,8 +10,6 @@ jobs:
   check:
     runs-on: nix-flakes
 
-    
-
     steps:
       - uses: actions/checkout@v4
 
@@ -25,4 +23,4 @@ jobs:
 
       - name: Run Clippy
         run: |
-          nix build .#clippy --print-build-logs -j auto
+          nix flake check . --print-build-logs -j auto
