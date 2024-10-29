@@ -15,7 +15,7 @@ use embassy_rp::{
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer};
 use embassy_usb::{
-    class::hid::{HidReader, HidReaderWriter, HidWriter, RequestHandler, State},
+    class::hid::{HidReaderWriter, RequestHandler, State},
     driver::Driver,
     msos::{self, windows_version},
     Builder, Handler, UsbDevice,
@@ -27,6 +27,11 @@ use crate::{
     hid::{
         gcc::{GcReportBuilder, GcState, GccRequestHandler, GCC_REPORT_DESCRIPTOR},
         procon::{ProconReportBuilder, ProconRequestHandler, PROCON_REPORT_DESCRIPTOR},
+        xinput::{
+            XInputReaderWriter, XInputReportBuilder, XInputRequestHandler, XInputState,
+            XINPUT_REPORT_DESCRIPTOR,
+        },
+        HidReaderWriterSplit, UsbReader, UsbWriter,
     },
     input::CHANNEL_GCC_STATE,
 };
@@ -72,6 +77,11 @@ impl From<ControllerMode> for UsbConfig {
                 vid: 0x57e,
                 pid: 0x2009,
                 report_descriptor: PROCON_REPORT_DESCRIPTOR,
+            },
+            ControllerMode::XInput => Self {
+                vid: 0x045e,
+                pid: 0x028e,
+                report_descriptor: XINPUT_REPORT_DESCRIPTOR,
             },
         }
     }
@@ -122,27 +132,41 @@ impl Handler for MyDeviceHandler {
     }
 }
 
-fn mk_hid_reader_writer<'d, D: Driver<'d>, const R: usize, const W: usize>(
+fn mk_hid_reader_writer<'d, S, D, T, F, const R: usize, const W: usize>(
     input_consistency_mode: InputConsistencyMode,
+    controller_mode: ControllerMode,
     report_descriptor: &'d [u8],
     mut builder: Builder<'d, D>,
-    state: &'d mut State<'d>,
-) -> (UsbDevice<'d, D>, HidReader<'d, D, R>, HidWriter<'d, D, W>) {
+    state: &'d mut S,
+    mut init_func: F,
+) -> (
+    UsbDevice<'d, D>,
+    impl UsbReader<'d, D, R>,
+    impl UsbWriter<'d, D, W>,
+)
+where
+    D: Driver<'d>,
+    T: HidReaderWriterSplit<'d, D, R, W> + 'd,
+    F: FnMut(&mut Builder<'d, D>, &'d mut S, embassy_usb::class::hid::Config<'d>) -> T + 'd,
+{
     let hid_config = embassy_usb::class::hid::Config {
         report_descriptor,
         request_handler: None,
-        poll_ms: match input_consistency_mode {
-            InputConsistencyMode::Original => 8,
-            InputConsistencyMode::ConsistencyHack
-            | InputConsistencyMode::SuperHack
-            | InputConsistencyMode::PC => 1,
+        poll_ms: if let ControllerMode::XInput = controller_mode {
+            1
+        } else {
+            match input_consistency_mode {
+                InputConsistencyMode::Original => 8,
+                InputConsistencyMode::ConsistencyHack
+                | InputConsistencyMode::SuperHack
+                | InputConsistencyMode::PC => 1,
+            }
         },
         max_packet_size_in: W as u16,
         max_packet_size_out: R as u16,
     };
 
-    let hid: HidReaderWriter<'d, D, R, W> =
-        HidReaderWriter::<'_, D, R, W>::new(&mut builder, state, hid_config);
+    let hid = init_func(&mut builder, state, hid_config);
 
     let usb = builder.build();
 
@@ -151,13 +175,16 @@ fn mk_hid_reader_writer<'d, D: Driver<'d>, const R: usize, const W: usize>(
     (usb, reader, writer)
 }
 
-fn mk_usb_transfer_futures<'d, D, H, Rq, const R: usize, const W: usize>(
+#[allow(clippy::too_many_arguments)]
+fn mk_usb_transfer_futures<'d, S, D, H, F, Rq, T, const R: usize, const W: usize>(
     input_consistency_mode: InputConsistencyMode,
+    controller_mode: ControllerMode,
     usb_config: &UsbConfig,
     request_handler: &'d mut Rq,
     builder: Builder<'d, D>,
-    state: &'d mut State<'d>,
     mut hid_report_builder: H,
+    state: &'d mut S,
+    init_func: F,
 ) -> (
     impl Future<Output = ()> + 'd,
     impl Future<Output = ()> + 'd,
@@ -167,12 +194,16 @@ where
     D: Driver<'d> + 'd,
     H: HidReportBuilder<W> + 'd,
     Rq: RequestHandler,
+    T: HidReaderWriterSplit<'d, D, R, W> + 'd,
+    F: FnMut(&mut Builder<'d, D>, &'d mut S, embassy_usb::class::hid::Config<'d>) -> T + 'd,
 {
-    let (mut usb, reader, mut writer) = mk_hid_reader_writer::<_, R, W>(
+    let (mut usb, reader, mut writer) = mk_hid_reader_writer(
         input_consistency_mode,
+        controller_mode,
         usb_config.report_descriptor,
         builder,
         state,
+        init_func,
     );
 
     let usb_fut = async move {
@@ -200,12 +231,14 @@ where
             // From the console's perspective, we are basically a laggy adapter, taking
             // a minimum of 333 extra us to send a report every time it's polled, but it
             // works to our advantage.
-            match input_consistency_mode {
-                InputConsistencyMode::SuperHack | InputConsistencyMode::ConsistencyHack => {
-                    // "Ticker at home", so we can use this for both consistency and SuperHack mode
-                    Timer::at(rate_limit_end_time).await;
+            if controller_mode != ControllerMode::XInput {
+                match input_consistency_mode {
+                    InputConsistencyMode::SuperHack | InputConsistencyMode::ConsistencyHack => {
+                        // "Ticker at home", so we can use this for both consistency and SuperHack mode
+                        Timer::at(rate_limit_end_time).await;
+                    }
+                    InputConsistencyMode::Original | InputConsistencyMode::PC => {}
                 }
-                InputConsistencyMode::Original | InputConsistencyMode::PC => {}
             }
 
             writer.ready().await;
@@ -224,6 +257,7 @@ where
                     debug!("Report written in {}us", micros);
                     if input_consistency_mode != InputConsistencyMode::Original
                         && input_consistency_mode != InputConsistencyMode::PC
+                        && controller_mode != ControllerMode::XInput
                     {
                         while rate_limit_end_time < currtime {
                             rate_limit_end_time += Duration::from_micros(8333);
@@ -291,20 +325,37 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: EmbassyDriver<'stati
     trace!("Start of config");
     let mut usb_config = embassy_usb::Config::new(config.vid, config.pid);
     usb_config.manufacturer = Some("Naxdy");
-    usb_config.product = Some(match input_consistency_mode {
-        InputConsistencyMode::Original => "NaxGCC (OG Mode)",
-        InputConsistencyMode::ConsistencyHack => "NaxGCC (Consistency Mode)",
-        InputConsistencyMode::SuperHack => "NaxGCC (SuperHack Mode)",
-        InputConsistencyMode::PC => "NaxGCC (PC Mode)",
+    usb_config.product = Some(if controller_mode == ControllerMode::XInput {
+        "NaxGCC (XInput Mode)"
+    } else {
+        match input_consistency_mode {
+            InputConsistencyMode::Original => "NaxGCC (OG Mode)",
+            InputConsistencyMode::ConsistencyHack => "NaxGCC (Consistency Mode)",
+            InputConsistencyMode::SuperHack => "NaxGCC (SuperHack Mode)",
+            InputConsistencyMode::PC => "NaxGCC (PC Mode)",
+        }
     });
     usb_config.serial_number = Some(serial);
     usb_config.max_power = 200;
     usb_config.max_packet_size_0 = 64;
-    usb_config.device_class = 0;
+    usb_config.device_class = if controller_mode == ControllerMode::XInput {
+        0xff
+    } else {
+        0
+    };
     usb_config.device_protocol = 0;
     usb_config.self_powered = false;
-    usb_config.device_sub_class = 0;
+    usb_config.device_sub_class = if controller_mode == ControllerMode::XInput {
+        0xff
+    } else {
+        0
+    };
     usb_config.supports_remote_wakeup = true;
+    usb_config.device_release = if controller_mode == ControllerMode::XInput {
+        0x0572
+    } else {
+        0x0010
+    };
 
     let mut config_descriptor = [0; 256];
     let mut bos_descriptor = [0; 256];
@@ -312,8 +363,6 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: EmbassyDriver<'stati
     let mut control_buf = [0; 64];
 
     let mut device_handler = MyDeviceHandler::new();
-
-    let mut state = State::new();
 
     let mut builder = Builder::new(
         driver,
@@ -337,29 +386,55 @@ pub async fn usb_transfer_task(raw_serial: [u8; 8], driver: EmbassyDriver<'stati
 
     match controller_mode {
         ControllerMode::GcAdapter => {
+            let mut state = State::new();
+
             let mut request_handler = GccRequestHandler;
 
-            let (usb_fut_wrapped, in_fut, out_fut) = mk_usb_transfer_futures::<_, _, _, 5, 37>(
+            let (usb_fut_wrapped, in_fut, out_fut) = mk_usb_transfer_futures(
                 input_consistency_mode,
+                controller_mode,
                 &config,
                 &mut request_handler,
                 builder,
-                &mut state,
                 GcReportBuilder::default(),
+                &mut state,
+                HidReaderWriter::<_, 5, 37>::new,
             );
 
             join(usb_fut_wrapped, join(in_fut, out_fut)).await;
         }
         ControllerMode::Procon => {
+            let mut state = State::new();
+
             let mut request_handler = ProconRequestHandler;
 
-            let (usb_fut_wrapped, in_fut, out_fut) = mk_usb_transfer_futures::<_, _, _, 64, 64>(
+            let (usb_fut_wrapped, in_fut, out_fut) = mk_usb_transfer_futures(
                 input_consistency_mode,
+                controller_mode,
                 &config,
                 &mut request_handler,
                 builder,
-                &mut state,
                 ProconReportBuilder::default(),
+                &mut state,
+                HidReaderWriter::<_, 64, 64>::new,
+            );
+
+            join(usb_fut_wrapped, join(in_fut, out_fut)).await;
+        }
+        ControllerMode::XInput => {
+            let mut state = XInputState::new();
+
+            let mut request_handler = XInputRequestHandler;
+
+            let (usb_fut_wrapped, in_fut, out_fut) = mk_usb_transfer_futures(
+                input_consistency_mode,
+                controller_mode,
+                &config,
+                &mut request_handler,
+                builder,
+                XInputReportBuilder,
+                &mut state,
+                XInputReaderWriter::<_, 32, 32>::new,
             );
 
             join(usb_fut_wrapped, join(in_fut, out_fut)).await;

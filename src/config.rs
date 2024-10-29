@@ -571,6 +571,8 @@ pub enum ControllerMode {
     GcAdapter = 0,
     /// Pretend to be a Nintendo Switch Pro Controller connected via USB.
     Procon = 1,
+    /// Act as an XInput device, and also advertise itself with 1000Hz polling capability.
+    XInput = 2,
 }
 
 #[derive(Debug, Clone, Format, PackedStruct)]

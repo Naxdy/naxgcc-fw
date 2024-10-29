@@ -428,6 +428,8 @@ pub async fn update_button_state_task(
         let mut m = MUTEX_CONTROLLER_MODE.lock().await;
         *m = if btn_start.is_low() {
             Some(ControllerMode::Procon)
+        } else if btn_x.is_low() {
+            Some(ControllerMode::XInput)
         } else {
             Some(ControllerMode::GcAdapter)
         };
