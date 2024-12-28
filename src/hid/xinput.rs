@@ -22,9 +22,9 @@ use embassy_usb::{
 };
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
-use crate::usb_comms::HidReportBuilder;
+use crate::{input::ControllerState, usb_comms::HidReportBuilder};
 
-use super::{gcc::GcState, HidReaderWriterSplit, UsbReader, UsbWriter};
+use super::{HidReaderWriterSplit, UsbReader, UsbWriter};
 
 /// lol
 pub const XINPUT_REPORT_DESCRIPTOR: &[u8] = &[];
@@ -111,37 +111,37 @@ pub struct XInputReport {
     pub reserved: [u8; 18],
 }
 
-impl From<&GcState> for XInputReport {
-    fn from(value: &GcState) -> Self {
+impl From<&ControllerState> for XInputReport {
+    fn from(value: &ControllerState) -> Self {
         Self {
             report_id: 0,
             report_size: 20,
             buttons_1: XInputButtons1 {
-                dpad_up: value.buttons_1.dpad_up,
-                dpad_down: value.buttons_1.dpad_down,
-                dpad_right: value.buttons_1.dpad_right,
-                dpad_left: value.buttons_1.dpad_left,
-                button_menu: value.buttons_2.button_start,
+                dpad_up: value.dpad_up,
+                dpad_down: value.dpad_down,
+                dpad_right: value.dpad_right,
+                dpad_left: value.dpad_left,
+                button_menu: value.button_start,
                 button_back: false,
                 button_stick_l: false,
                 button_stick_r: false,
             },
             buttons_2: XInputButtons2 {
                 blank_1: false,
-                bumper_l: false,
-                bumper_r: value.buttons_2.button_z,
-                button_a: value.buttons_1.button_a,
-                button_b: value.buttons_1.button_b,
-                button_x: value.buttons_1.button_x,
-                button_y: value.buttons_1.button_y,
+                bumper_l: value.trigger_zl,
+                bumper_r: value.trigger_zr,
+                button_a: value.button_a,
+                button_b: value.button_b,
+                button_x: value.button_x,
+                button_y: value.button_y,
                 button_guide: false,
             },
-            analog_trigger_l: value.trigger_l,
-            analog_trigger_r: value.trigger_r,
-            stick_left_x: (value.stick_x as i16 - 127).clamp(-127, 127) * 257,
-            stick_left_y: (value.stick_y as i16 - 127).clamp(-127, 127) * 257,
-            stick_right_x: (value.cstick_x as i16 - 127).clamp(-127, 127) * 257,
-            stick_right_y: (value.cstick_y as i16 - 127).clamp(-127, 127) * 257,
+            analog_trigger_l: if value.trigger_l { 255 } else { 0 },
+            analog_trigger_r: if value.trigger_r { 255 } else { 0 },
+            stick_left_x: (value.stick_state.ax as i16 - 127).clamp(-127, 127) * 257,
+            stick_left_y: (value.stick_state.ay as i16 - 127).clamp(-127, 127) * 257,
+            stick_right_x: (value.stick_state.cx as i16 - 127).clamp(-127, 127) * 257,
+            stick_right_y: (value.stick_state.cy as i16 - 127).clamp(-127, 127) * 257,
             reserved: [0u8; 18],
         }
     }
@@ -153,7 +153,7 @@ impl From<&GcState> for XInputReport {
 pub struct XInputReportBuilder;
 
 impl HidReportBuilder<32> for XInputReportBuilder {
-    async fn get_hid_report(&mut self, state: &super::gcc::GcState) -> [u8; 32] {
+    async fn get_hid_report(&mut self, state: &ControllerState) -> [u8; 32] {
         XInputReport::from(state)
             .pack()
             .expect("Failed to pack XInput State")

@@ -17,8 +17,8 @@ use libm::{fmaxf, fminf};
 use crate::{
     config::{
         ControllerConfig, ControllerMode, InputConsistencyMode, OverrideGcReportInstruction,
-        OverrideStickState, SIGNAL_CONFIG_CHANGE, SIGNAL_IS_CALIBRATING, SIGNAL_OVERRIDE_GCC_STATE,
-        SIGNAL_OVERRIDE_STICK_STATE,
+        OverrideStickState, SIGNAL_CONFIG_CHANGE, SIGNAL_IS_CALIBRATING,
+        SIGNAL_OVERRIDE_CONTROLLER_STATE, SIGNAL_OVERRIDE_STICK_STATE,
     },
     filter::{run_waveshaping, FilterGains, KalmanState, WaveshapingValues, FILTER_GAINS},
     helpers::XyValuePair,
@@ -29,8 +29,13 @@ use crate::{
 };
 
 /// Used to send the button state to the usb task and the calibration task
-pub static CHANNEL_GCC_STATE: PubSubChannel<CriticalSectionRawMutex, GcState, 1, 4, 1> =
-    PubSubChannel::new();
+pub static CHANNEL_CONTROLLER_STATE: PubSubChannel<
+    CriticalSectionRawMutex,
+    ControllerState,
+    1,
+    4,
+    1,
+> = PubSubChannel::new();
 
 /// Used to send the stick state from the stick task to the main input task
 static SIGNAL_STICK_STATE: Signal<CriticalSectionRawMutex, StickState> = Signal::new();
@@ -43,12 +48,23 @@ pub static SPI_CCS_SHARED: Mutex<ThreadModeRawMutex, Option<Output<'static>>> = 
 const STICK_HYST_VAL: f32 = 0.3;
 pub const FLOAT_ORIGIN: f32 = 127.5;
 
-#[derive(Clone, Debug, Default, Format)]
+#[derive(Clone, Copy, Debug, Format, PartialEq, Eq)]
 pub struct StickState {
     pub ax: u8,
     pub ay: u8,
     pub cx: u8,
     pub cy: u8,
+}
+
+impl Default for StickState {
+    fn default() -> Self {
+        Self {
+            ax: 127,
+            ay: 127,
+            cx: 127,
+            cy: 127,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -67,6 +83,51 @@ struct RawStickValues {
     c_raw: XyValuePair<f32>,
     a_unfiltered: XyValuePair<f32>,
     c_unfiltered: XyValuePair<f32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Format, PartialEq, Eq)]
+pub struct ControllerState {
+    pub button_a: bool,
+    pub button_b: bool,
+    pub button_x: bool,
+    pub button_y: bool,
+    pub trigger_zr: bool,
+    pub trigger_zl: bool,
+    pub trigger_l: bool,
+    pub trigger_r: bool,
+    pub button_start: bool,
+    pub dpad_up: bool,
+    pub dpad_down: bool,
+    pub dpad_left: bool,
+    pub dpad_right: bool,
+    pub stick_state: StickState,
+}
+
+/// This is only implemented for backwards-compatibility purposes
+impl From<GcState> for ControllerState {
+    fn from(value: GcState) -> Self {
+        Self {
+            button_a: value.buttons_1.button_a,
+            button_b: value.buttons_1.button_b,
+            button_x: value.buttons_1.button_x,
+            button_y: value.buttons_1.button_y,
+            trigger_zr: value.buttons_2.button_z,
+            trigger_zl: false,
+            trigger_l: value.trigger_l > 170,
+            trigger_r: value.trigger_r > 170,
+            button_start: value.buttons_2.button_start,
+            dpad_up: value.buttons_1.dpad_up,
+            dpad_down: value.buttons_1.dpad_down,
+            dpad_left: value.buttons_1.dpad_left,
+            dpad_right: value.buttons_1.dpad_right,
+            stick_state: StickState {
+                ax: value.stick_x,
+                ay: value.stick_y,
+                cx: value.stick_x,
+                cy: value.stick_y,
+            },
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Format, Copy)]
@@ -312,7 +373,7 @@ async fn update_stick_states(
     raw_stick_values.c_unfiltered.x = fminf(125., fmaxf(-125., remapped_c_unfiltered.x));
     raw_stick_values.c_unfiltered.y = fminf(125., fmaxf(-125., remapped_c_unfiltered.y));
 
-    let mut out_stick_state = current_stick_state.clone();
+    let mut out_stick_state = *current_stick_state;
 
     let diff_x = (remapped.x + FLOAT_ORIGIN) - current_stick_state.ax as f32;
     if !(-STICK_HYST_VAL..=(1.0 + STICK_HYST_VAL)).contains(&diff_x) {
@@ -345,7 +406,7 @@ async fn update_stick_states(
 
 #[allow(clippy::too_many_arguments)]
 fn update_button_states(
-    gcc_state: &mut GcState,
+    controller_state: &mut ControllerState,
     btn_a: &Input<'_>,
     btn_b: &Input<'_>,
     btn_x: &Input<'_>,
@@ -353,42 +414,37 @@ fn update_button_states(
     btn_start: &Input<'_>,
     btn_l: &Input<'_>,
     btn_r: &Input<'_>,
-    btn_z: &Input<'_>,
+    btn_zr: &Input<'_>,
+    btn_zl: &Input<'_>,
     btn_dleft: &Input<'_>,
     btn_dright: &Input<'_>,
     btn_dup: &Input<'_>,
     btn_ddown: &Input<'_>,
 ) {
-    gcc_state.buttons_1.button_a = btn_a.is_low();
-    gcc_state.buttons_1.button_b = btn_b.is_low();
-    gcc_state.buttons_1.button_x = btn_x.is_low();
-    gcc_state.buttons_1.button_y = btn_y.is_low();
-    gcc_state.buttons_2.button_z = btn_z.is_low();
-    gcc_state.buttons_2.button_start = btn_start.is_low();
-    gcc_state.buttons_2.button_l = btn_l.is_low();
-    gcc_state.buttons_2.button_r = btn_r.is_low();
-    gcc_state.buttons_1.dpad_left = btn_dleft.is_low();
-    gcc_state.buttons_1.dpad_right = btn_dright.is_low();
-    gcc_state.buttons_1.dpad_up = btn_dup.is_low();
-    gcc_state.buttons_1.dpad_down = btn_ddown.is_low();
-    gcc_state.trigger_l = match gcc_state.buttons_2.button_l {
-        true => 255,
-        false => 0,
-    };
-    gcc_state.trigger_r = match gcc_state.buttons_2.button_r {
-        true => 255,
-        false => 0,
-    };
+    controller_state.button_a = btn_a.is_low();
+    controller_state.button_b = btn_b.is_low();
+    controller_state.button_x = btn_x.is_low();
+    controller_state.button_y = btn_y.is_low();
+    controller_state.trigger_zr = btn_zr.is_low();
+    controller_state.trigger_zl = btn_zl.is_low();
+    controller_state.button_start = btn_start.is_low();
+    controller_state.trigger_l = btn_l.is_low();
+    controller_state.trigger_r = btn_r.is_low();
+    controller_state.dpad_left = btn_dleft.is_low();
+    controller_state.dpad_right = btn_dright.is_low();
+    controller_state.dpad_up = btn_dup.is_low();
+    controller_state.dpad_down = btn_ddown.is_low();
 }
 
 #[embassy_executor::task]
 pub async fn input_integrity_benchmark() {
     loop {
-        SIGNAL_OVERRIDE_GCC_STATE.signal(OverrideGcReportInstruction {
+        SIGNAL_OVERRIDE_CONTROLLER_STATE.signal(OverrideGcReportInstruction {
             report: {
-                let mut report = GcState::default();
-                report.buttons_1.dpad_up = true;
-                report
+                ControllerState {
+                    dpad_up: true,
+                    ..Default::default()
+                }
             },
             duration_ms: 100,
         });
@@ -402,7 +458,8 @@ pub async fn input_integrity_benchmark() {
 #[allow(clippy::too_many_arguments)]
 #[embassy_executor::task]
 pub async fn update_button_state_task(
-    btn_z: Input<'static>,
+    btn_zr: Input<'static>,
+    btn_zl: Input<'static>,
     btn_a: Input<'static>,
     btn_b: Input<'static>,
     btn_dright: Input<'static>,
@@ -442,11 +499,11 @@ pub async fn update_button_state_task(
         MUTEX_INPUT_CONSISTENCY_MODE.lock().await.unwrap()
     };
 
-    let mut previous_state = GcState::default();
+    let mut previous_state = ControllerState::default();
 
-    let mut gcc_state = GcState::default();
+    let mut controller_state = ControllerState::default();
 
-    let gcc_publisher = CHANNEL_GCC_STATE.publisher().unwrap();
+    let gcc_publisher = CHANNEL_CONTROLLER_STATE.publisher().unwrap();
 
     let mut override_stick_state: Option<OverrideStickState> = None;
 
@@ -459,7 +516,7 @@ pub async fn update_button_state_task(
 
     loop {
         update_button_states(
-            &mut gcc_state,
+            &mut controller_state,
             &btn_a,
             &btn_b,
             &btn_x,
@@ -467,7 +524,8 @@ pub async fn update_button_state_task(
             &btn_start,
             &btn_l,
             &btn_r,
-            &btn_z,
+            &btn_zr,
+            &btn_zl,
             &btn_dleft,
             &btn_dright,
             &btn_dup,
@@ -476,10 +534,7 @@ pub async fn update_button_state_task(
 
         // not every loop pass is going to update the stick state
         if let Some(stick_state) = SIGNAL_STICK_STATE.try_take() {
-            gcc_state.stick_x = stick_state.ax;
-            gcc_state.stick_y = stick_state.ay;
-            gcc_state.cstick_x = stick_state.cx;
-            gcc_state.cstick_y = stick_state.cy;
+            controller_state.stick_state = stick_state
         }
 
         if let Some(override_stick_state_opt) = SIGNAL_OVERRIDE_STICK_STATE.try_take() {
@@ -488,7 +543,7 @@ pub async fn update_button_state_task(
         }
 
         // check for a gcc state override (usually coming from the config task)
-        if let Some(override_gcc_state) = SIGNAL_OVERRIDE_GCC_STATE.try_take() {
+        if let Some(override_gcc_state) = SIGNAL_OVERRIDE_CONTROLLER_STATE.try_take() {
             trace!("Overridden gcc state: {:?}", override_gcc_state.report);
             let end_time = Instant::now() + Duration::from_millis(override_gcc_state.duration_ms);
             while Instant::now() < end_time {
@@ -506,20 +561,20 @@ pub async fn update_button_state_task(
         };
 
         if let Some(override_state) = &override_stick_state {
-            let mut overriden_gcc_state = gcc_state;
+            let mut overriden_gcc_state = controller_state;
             match override_state.which_stick {
                 Stick::ControlStick => {
-                    overriden_gcc_state.stick_x = override_state.x;
-                    overriden_gcc_state.stick_y = override_state.y;
+                    overriden_gcc_state.stick_state.ax = override_state.x;
+                    overriden_gcc_state.stick_state.ay = override_state.y;
                 }
                 Stick::CStick => {
-                    overriden_gcc_state.cstick_x = override_state.x;
-                    overriden_gcc_state.cstick_y = override_state.y;
+                    overriden_gcc_state.stick_state.cx = override_state.x;
+                    overriden_gcc_state.stick_state.cy = override_state.y;
                 }
             }
             gcc_publisher.publish_immediate(overriden_gcc_state);
         } else {
-            input_filter.apply_filter(&mut gcc_state);
+            input_filter.apply_filter(&mut controller_state);
             if input_consistency_mode == InputConsistencyMode::SuperHack {
                 // transmit state always for the first 5 seconds to give the console time to initialize the controller
                 if initializing && Instant::now().duration_since(init_time) > Duration::from_secs(5)
@@ -527,12 +582,12 @@ pub async fn update_button_state_task(
                     initializing = false;
                 }
 
-                if gcc_state != previous_state || initializing {
-                    gcc_publisher.publish_immediate(gcc_state);
-                    previous_state = gcc_state;
+                if controller_state != previous_state || initializing {
+                    gcc_publisher.publish_immediate(controller_state);
+                    previous_state = controller_state;
                 }
             } else {
-                gcc_publisher.publish_immediate(gcc_state);
+                gcc_publisher.publish_immediate(controller_state);
             }
         }
 
@@ -621,7 +676,7 @@ pub async fn update_stick_states_task(
             last_loop_time = n;
         };
 
-        SIGNAL_STICK_STATE.signal(current_stick_state.clone());
+        SIGNAL_STICK_STATE.signal(current_stick_state);
 
         yield_now().await;
         ticker.next().await;

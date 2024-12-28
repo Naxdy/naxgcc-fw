@@ -18,9 +18,7 @@ use embassy_usb::{
 use packed_struct::{derive::PackedStruct, PackedStruct};
 use rand::RngCore;
 
-use crate::usb_comms::HidReportBuilder;
-
-use super::gcc::GcState;
+use crate::{input::ControllerState, usb_comms::HidReportBuilder};
 
 const SW_INFO_SET_MAC: u8 = 0x01;
 
@@ -486,36 +484,36 @@ impl Default for BatteryStatus {
     }
 }
 
-impl From<&GcState> for ProconState {
-    fn from(value: &GcState) -> Self {
+impl From<&ControllerState> for ProconState {
+    fn from(value: &ControllerState) -> Self {
         Self {
             buttons_left: ProconButtonsLeft {
-                dpad_down: value.buttons_1.dpad_down,
-                dpad_right: value.buttons_1.dpad_right,
-                dpad_up: value.buttons_1.dpad_up,
-                dped_left: value.buttons_1.dpad_left,
-                trigger_l: value.buttons_2.button_l,
-                trigger_zl: value.buttons_2.button_l,
+                dpad_down: value.dpad_down,
+                dpad_right: value.dpad_right,
+                dpad_up: value.dpad_up,
+                dped_left: value.dpad_left,
+                trigger_l: value.trigger_zl,
+                trigger_zl: value.trigger_l,
                 ..Default::default()
             },
             buttons_right: ProconButtonsRight {
-                button_a: value.buttons_1.button_a,
-                button_b: value.buttons_1.button_b,
-                button_x: value.buttons_1.button_x,
-                button_y: value.buttons_1.button_y,
-                trigger_r: value.buttons_2.button_z,
-                trigger_zr: value.buttons_2.button_r,
+                button_a: value.button_a,
+                button_b: value.button_b,
+                button_x: value.button_x,
+                button_y: value.button_y,
+                trigger_r: value.trigger_zr,
+                trigger_zr: value.trigger_r,
                 ..Default::default()
             },
             buttons_shared: ProconButtonsShared {
-                button_plus: value.buttons_2.button_start && !value.buttons_2.button_z,
-                button_home: value.buttons_2.button_start && value.buttons_2.button_z,
+                button_plus: value.button_start && !value.trigger_zr,
+                button_home: value.button_start && value.trigger_zr,
                 ..Default::default()
             },
-            lstick_x: value.stick_x as u16 * 16,
-            lstick_y: value.stick_y,
-            rstick_x: value.cstick_x as u16 * 16,
-            rstick_y: value.cstick_y,
+            lstick_x: value.stick_state.ax as u16 * 16,
+            lstick_y: value.stick_state.ay,
+            rstick_x: value.stick_state.cx as u16 * 16,
+            rstick_y: value.stick_state.cy,
         }
     }
 }
@@ -694,7 +692,7 @@ impl ProconReportBuilder {
 }
 
 impl HidReportBuilder<64> for ProconReportBuilder {
-    async fn get_hid_report(&mut self, state: &GcState) -> [u8; 64] {
+    async fn get_hid_report(&mut self, state: &ControllerState) -> [u8; 64] {
         let current_report_info = if self.switch_reporting_mode == RM_SEND_STATE {
             SIGNAL_PROCON_REQUEST.try_take()
         } else {

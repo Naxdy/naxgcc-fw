@@ -2,7 +2,7 @@ use defmt::warn;
 
 use crate::{
     config::{is_awaitable_button_pressed, AwaitableButtons},
-    hid::gcc::GcState,
+    input::ControllerState,
 };
 
 /**
@@ -14,7 +14,7 @@ use crate::{
  */
 
 pub trait InputFilter: Sized {
-    fn apply_filter(&mut self, gcc_state: &mut GcState);
+    fn apply_filter(&mut self, controller_state: &mut ControllerState);
 }
 
 /// Presses a single button if another button is pressed.
@@ -26,46 +26,44 @@ pub struct SingleButtonMacroFilter {
 }
 
 impl InputFilter for SingleButtonMacroFilter {
-    fn apply_filter(&mut self, gcc_state: &mut GcState) {
-        if is_awaitable_button_pressed(gcc_state, &self.btn_instigator) {
+    fn apply_filter(&mut self, controller_state: &mut ControllerState) {
+        if is_awaitable_button_pressed(controller_state, &self.btn_instigator) {
             match self.btn_to_press {
                 AwaitableButtons::A => {
-                    gcc_state.buttons_1.button_a = true;
+                    controller_state.button_a = true;
                 }
                 AwaitableButtons::B => {
-                    gcc_state.buttons_1.button_b = true;
+                    controller_state.button_b = true;
                 }
                 AwaitableButtons::X => {
-                    gcc_state.buttons_1.button_x = true;
+                    controller_state.button_x = true;
                 }
                 AwaitableButtons::Y => {
-                    gcc_state.buttons_1.button_y = true;
+                    controller_state.button_y = true;
                 }
                 AwaitableButtons::L => {
-                    gcc_state.trigger_l = 255;
-                    gcc_state.buttons_2.button_l = true;
+                    controller_state.trigger_l = true;
                 }
                 AwaitableButtons::R => {
-                    gcc_state.trigger_r = 255;
-                    gcc_state.buttons_2.button_r = true;
+                    controller_state.trigger_r = true;
                 }
                 AwaitableButtons::Z => {
-                    gcc_state.buttons_2.button_z = true;
+                    controller_state.trigger_zr = true;
                 }
                 AwaitableButtons::Start => {
-                    gcc_state.buttons_2.button_start = true;
+                    controller_state.button_start = true;
                 }
                 AwaitableButtons::Up => {
-                    gcc_state.buttons_1.dpad_up = true;
+                    controller_state.dpad_up = true;
                 }
                 AwaitableButtons::Down => {
-                    gcc_state.buttons_1.dpad_down = true;
+                    controller_state.dpad_down = true;
                 }
                 AwaitableButtons::Left => {
-                    gcc_state.buttons_1.dpad_left = true;
+                    controller_state.dpad_left = true;
                 }
                 AwaitableButtons::Right => {
-                    gcc_state.buttons_1.dpad_right = true;
+                    controller_state.dpad_right = true;
                 }
                 b => {
                     warn!(
@@ -83,22 +81,22 @@ impl InputFilter for SingleButtonMacroFilter {
 pub struct CStickUpTiltFilter;
 
 impl InputFilter for CStickUpTiltFilter {
-    fn apply_filter(&mut self, gcc_state: &mut GcState) {
-        if gcc_state.cstick_y > 157 {
-            if (137..=201).contains(&gcc_state.cstick_x) {
-                gcc_state.cstick_x = 201;
-                gcc_state.cstick_y = 255;
-            } else if (53..=117).contains(&gcc_state.cstick_x) {
-                gcc_state.cstick_x = 53;
-                gcc_state.cstick_y = 255;
+    fn apply_filter(&mut self, controller_state: &mut ControllerState) {
+        if controller_state.stick_state.cy > 157 {
+            if (137..=201).contains(&controller_state.stick_state.cx) {
+                controller_state.stick_state.cx = 201;
+                controller_state.stick_state.cy = 255;
+            } else if (53..=117).contains(&controller_state.stick_state.cx) {
+                controller_state.stick_state.cx = 53;
+                controller_state.stick_state.cy = 255;
             }
-        } else if gcc_state.cstick_y < 97 {
-            if (137..=221).contains(&gcc_state.cstick_x) {
-                gcc_state.cstick_x = 221;
-                gcc_state.cstick_y = 0;
-            } else if (53..=117).contains(&gcc_state.cstick_x) {
-                gcc_state.cstick_x = 33;
-                gcc_state.cstick_y = 0;
+        } else if controller_state.stick_state.cy < 97 {
+            if (137..=221).contains(&controller_state.stick_state.cx) {
+                controller_state.stick_state.cx = 221;
+                controller_state.stick_state.cy = 0;
+            } else if (53..=117).contains(&controller_state.stick_state.cx) {
+                controller_state.stick_state.cx = 33;
+                controller_state.stick_state.cy = 0;
             }
         }
     }
@@ -110,22 +108,22 @@ impl InputFilter for CStickUpTiltFilter {
 pub struct CStickAngledFTiltFilter;
 
 impl InputFilter for CStickAngledFTiltFilter {
-    fn apply_filter(&mut self, gcc_state: &mut GcState) {
-        if gcc_state.cstick_y > 147 {
-            if (147..=225).contains(&gcc_state.cstick_x) {
-                gcc_state.cstick_x = 205;
-                gcc_state.cstick_y = 205;
-            } else if (30..=107).contains(&gcc_state.cstick_x) {
-                gcc_state.cstick_x = 50;
-                gcc_state.cstick_y = 205;
+    fn apply_filter(&mut self, controller_state: &mut ControllerState) {
+        if controller_state.stick_state.cy > 147 {
+            if (147..=225).contains(&controller_state.stick_state.cx) {
+                controller_state.stick_state.cx = 205;
+                controller_state.stick_state.cy = 205;
+            } else if (30..=107).contains(&controller_state.stick_state.cx) {
+                controller_state.stick_state.cx = 50;
+                controller_state.stick_state.cy = 205;
             }
-        } else if gcc_state.cstick_y < 107 {
-            if (147..=225).contains(&gcc_state.cstick_x) {
-                gcc_state.cstick_x = 205;
-                gcc_state.cstick_y = 50;
-            } else if (30..=107).contains(&gcc_state.cstick_x) {
-                gcc_state.cstick_x = 50;
-                gcc_state.cstick_y = 50;
+        } else if controller_state.stick_state.cy < 107 {
+            if (147..=225).contains(&controller_state.stick_state.cx) {
+                controller_state.stick_state.cx = 205;
+                controller_state.stick_state.cy = 50;
+            } else if (30..=107).contains(&controller_state.stick_state.cx) {
+                controller_state.stick_state.cx = 50;
+                controller_state.stick_state.cy = 50;
             }
         }
     }
@@ -136,5 +134,5 @@ impl InputFilter for CStickAngledFTiltFilter {
 pub struct DummyFilter;
 
 impl InputFilter for DummyFilter {
-    fn apply_filter(&mut self, _gcc_state: &mut GcState) {}
+    fn apply_filter(&mut self, _gcc_state: &mut ControllerState) {}
 }
