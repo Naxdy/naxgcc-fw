@@ -19,7 +19,8 @@ use crate::{
     helpers::{PackedFloat, ToPackedFloatArray, ToRegularArray, XyValuePair},
     hid::gcc::{GcButtons1, GcButtons2, GcState},
     input::{
-        read_ext_adc, Stick, StickAxis, FLOAT_ORIGIN, SPI_ACS_SHARED, SPI_CCS_SHARED, SPI_SHARED,
+        read_ext_adc, ControllerState, Stick, StickAxis, FLOAT_ORIGIN, SPI_ACS_SHARED,
+        SPI_CCS_SHARED, SPI_SHARED,
     },
     stick::{
         calc_stick_values, legalize_notches, AppliedCalibration, CleanedCalibrationPoints,
@@ -37,7 +38,7 @@ use embassy_sync::{
 };
 use embassy_time::Timer;
 
-use crate::input::CHANNEL_GCC_STATE;
+use crate::input::CHANNEL_CONTROLLER_STATE;
 
 /// Whether we are currently calibrating the sticks. Updates are dispatched when the status changes.
 /// Initial status is assumed to be false.
@@ -53,8 +54,10 @@ pub static SIGNAL_OVERRIDE_STICK_STATE: Signal<
 > = Signal::new();
 
 /// Dispatched when we want to override the GCC state for a short amount of time.
-pub static SIGNAL_OVERRIDE_GCC_STATE: Signal<CriticalSectionRawMutex, OverrideGcReportInstruction> =
-    Signal::new();
+pub static SIGNAL_OVERRIDE_CONTROLLER_STATE: Signal<
+    CriticalSectionRawMutex,
+    OverrideGcReportInstruction,
+> = Signal::new();
 
 /// Dispatched when we want to enter config mode, sent from core1 so config mode
 /// doesn't need to watch for the entire button combo every time.
@@ -79,7 +82,7 @@ const MAX_ANALOG_SCALER: u8 = 125;
 /// a certain mode.
 #[derive(Default, Debug, Clone, Format)]
 pub struct OverrideGcReportInstruction {
-    pub report: GcState,
+    pub report: ControllerState,
     pub duration_ms: u64,
 }
 
@@ -684,7 +687,7 @@ trait ButtonPressProvider {
 }
 
 impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> ButtonPressProvider
-    for Subscriber<'a, T, GcState, I, J, K>
+    for Subscriber<'a, T, ControllerState, I, J, K>
 {
     async fn wait_for_button_press(&mut self, button_to_wait_for: &AwaitableButtons) {
         loop {
@@ -784,25 +787,25 @@ impl<'a, T: RawMutex, const I: usize, const J: usize, const K: usize> ButtonPres
 }
 
 pub fn is_awaitable_button_pressed(
-    report: &GcState,
+    report: &ControllerState,
     button_to_wait_for: &AwaitableButtons,
 ) -> bool {
     match button_to_wait_for {
-        AwaitableButtons::A => report.buttons_1.button_a,
-        AwaitableButtons::B => report.buttons_1.button_b,
-        AwaitableButtons::X => report.buttons_1.button_x,
-        AwaitableButtons::Y => report.buttons_1.button_y,
-        AwaitableButtons::Up => report.buttons_1.dpad_up,
-        AwaitableButtons::Down => report.buttons_1.dpad_down,
-        AwaitableButtons::Left => report.buttons_1.dpad_left,
-        AwaitableButtons::Right => report.buttons_1.dpad_right,
-        AwaitableButtons::Start => report.buttons_2.button_start,
-        AwaitableButtons::L => report.buttons_2.button_l || report.trigger_l > 10,
-        AwaitableButtons::R => report.buttons_2.button_r || report.trigger_r > 10,
-        AwaitableButtons::Z => report.buttons_2.button_z,
+        AwaitableButtons::A => report.button_a,
+        AwaitableButtons::B => report.button_b,
+        AwaitableButtons::X => report.button_x,
+        AwaitableButtons::Y => report.button_y,
+        AwaitableButtons::Up => report.dpad_up,
+        AwaitableButtons::Down => report.dpad_down,
+        AwaitableButtons::Left => report.dpad_left,
+        AwaitableButtons::Right => report.dpad_right,
+        AwaitableButtons::Start => report.button_start,
+        AwaitableButtons::L => report.trigger_l,
+        AwaitableButtons::R => report.trigger_r,
+        AwaitableButtons::Z => report.trigger_zr,
         AwaitableButtons::Wildcard => true,
         AwaitableButtons::Impossible => false,
-        AwaitableButtons::NotZ => !report.buttons_2.button_z,
+        AwaitableButtons::NotZ => !report.trigger_zr,
     }
 }
 
@@ -1023,7 +1026,7 @@ impl<'a> StickCalibrationProcess<'a> {
     pub async fn calibrate_stick(&mut self) {
         info!("Beginning stick calibration for {}", self.which_stick);
 
-        let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
+        let mut gcc_subscriber = CHANNEL_CONTROLLER_STATE.subscriber().unwrap();
         SIGNAL_IS_CALIBRATING.signal(true);
 
         let mut done = false;
@@ -1137,7 +1140,7 @@ fn get_stick_display_coords(current_step: usize) -> (f32, f32) {
 }
 
 pub async fn override_gcc_state_and_wait(state: &OverrideGcReportInstruction) {
-    SIGNAL_OVERRIDE_GCC_STATE.signal(state.clone());
+    SIGNAL_OVERRIDE_CONTROLLER_STATE.signal(state.clone());
     Timer::after_millis(state.duration_ms).await;
 }
 
@@ -1150,7 +1153,7 @@ async fn configuration_main_loop<
 >(
     current_config: &ControllerConfig,
     flash: &mut Flash<'static, FLASH, Async, FLASH_SIZE>,
-    gcc_subscriber: &mut Subscriber<'a, M, GcState, C, S, P>,
+    gcc_subscriber: &mut Subscriber<'a, M, ControllerState, C, S, P>,
 ) -> ControllerConfig {
     let mut final_config = current_config.clone();
     let config_options = [
@@ -1226,7 +1229,8 @@ async fn configuration_main_loop<
                         stick_y: 127,
                         cstick_x: 127,
                         cstick_y: 127,
-                    },
+                    }
+                    .into(),
                     duration_ms: 1000,
                 })
                 .await;
@@ -1254,7 +1258,8 @@ async fn configuration_main_loop<
                         stick_y: 255,
                         cstick_x: 127,
                         cstick_y: 127,
-                    },
+                    }
+                    .into(),
                     duration_ms: 1000,
                 })
                 .await;
@@ -1283,7 +1288,8 @@ async fn configuration_main_loop<
                         stick_y: 127,
                         cstick_x: 255,
                         cstick_y: 255,
-                    },
+                    }
+                    .into(),
                     duration_ms: 1000,
                 })
                 .await;
@@ -1370,7 +1376,8 @@ async fn configuration_main_loop<
                                     StickAxis::YAxis => *to_adjust,
                                 },
                             }) as u8,
-                    },
+                    }
+                    .into(),
                     duration_ms: 750,
                 })
                 .await;
@@ -1456,7 +1463,8 @@ async fn configuration_main_loop<
                                     StickAxis::YAxis => *to_adjust,
                                 },
                             }) as u8,
-                    },
+                    }
+                    .into(),
                     duration_ms: 750,
                 })
                 .await;
@@ -1542,7 +1550,8 @@ async fn configuration_main_loop<
                                     StickAxis::YAxis => *to_adjust,
                                 },
                             }) as u8,
-                    },
+                    }
+                    .into(),
                     duration_ms: 750,
                 })
                 .await;
@@ -1597,7 +1606,8 @@ async fn configuration_main_loop<
                                 Stick::ControlStick => 0,
                                 Stick::CStick => *to_adjust,
                             }) as u8,
-                    },
+                    }
+                    .into(),
                     duration_ms: 750,
                 })
                 .await;
@@ -1653,7 +1663,8 @@ async fn configuration_main_loop<
                                 Stick::ControlStick => 0,
                                 Stick::CStick => *to_adjust,
                             }) as u8,
-                    },
+                    }
+                    .into(),
                     duration_ms: 750,
                 })
                 .await;
@@ -1694,7 +1705,8 @@ async fn configuration_main_loop<
                         stick_y: 127 + *to_adjust,
                         cstick_x: 127,
                         cstick_y: 127,
-                    },
+                    }
+                    .into(),
                     duration_ms: 750,
                 })
                 .await;
@@ -1735,7 +1747,8 @@ async fn configuration_main_loop<
                             }) as u8,
                         cstick_x: 127,
                         cstick_y: 127,
-                    },
+                    }
+                    .into(),
                     duration_ms: 750,
                 })
                 .await;
@@ -1763,7 +1776,8 @@ async fn configuration_main_loop<
                         stick_y: 127 + final_config.astick_config.y_waveshaping,
                         cstick_x: 127 + final_config.cstick_config.x_waveshaping,
                         cstick_y: 127 + final_config.cstick_config.y_waveshaping,
-                    },
+                    }
+                    .into(),
                     duration_ms: 1000,
                 })
                 .await;
@@ -1789,7 +1803,8 @@ async fn configuration_main_loop<
                         stick_y: 127 + final_config.astick_config.y_smoothing,
                         cstick_x: 127 + final_config.cstick_config.x_smoothing,
                         cstick_y: 127 + final_config.cstick_config.y_smoothing,
-                    },
+                    }
+                    .into(),
                     duration_ms: 1000,
                 })
                 .await;
@@ -1815,7 +1830,8 @@ async fn configuration_main_loop<
                         stick_y: (127 + final_config.astick_config.y_snapback) as u8,
                         cstick_x: (127 + final_config.cstick_config.x_snapback) as u8,
                         cstick_y: (127 + final_config.cstick_config.y_snapback) as u8,
-                    },
+                    }
+                    .into(),
                     duration_ms: 1000,
                 })
                 .await;
@@ -1836,7 +1852,7 @@ async fn configuration_main_loop<
 
 #[embassy_executor::task]
 pub async fn config_task(mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>) {
-    let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
+    let mut gcc_subscriber = CHANNEL_CONTROLLER_STATE.subscriber().unwrap();
 
     info!("Config task is running.");
 
@@ -1886,7 +1902,8 @@ pub async fn config_task(mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>) {
                 stick_y: 127,
                 cstick_x: 127,
                 cstick_y: 127,
-            },
+            }
+            .into(),
             duration_ms: 1000,
         })
         .await;
@@ -1902,7 +1919,7 @@ pub async fn config_task(mut flash: Flash<'static, FLASH, Async, FLASH_SIZE>) {
 
 #[embassy_executor::task]
 pub async fn enter_config_mode_task() {
-    let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
+    let mut gcc_subscriber = CHANNEL_CONTROLLER_STATE.subscriber().unwrap();
 
     info!("Enter config mode task is running.");
 

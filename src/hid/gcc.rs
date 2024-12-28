@@ -4,7 +4,10 @@ use embassy_usb::{
     control::OutResponse,
 };
 
-use crate::usb_comms::{HidReportBuilder, SIGNAL_RUMBLE};
+use crate::{
+    input::ControllerState,
+    usb_comms::{HidReportBuilder, SIGNAL_RUMBLE},
+};
 use packed_struct::{derive::PackedStruct, PackedStruct};
 
 #[rustfmt::skip]
@@ -125,6 +128,36 @@ pub struct GcState {
     pub trigger_r: u8,
 }
 
+impl From<ControllerState> for GcState {
+    fn from(value: ControllerState) -> Self {
+        Self {
+            buttons_1: GcButtons1 {
+                button_a: value.button_a,
+                button_b: value.button_b,
+                button_x: value.button_x,
+                button_y: value.button_y,
+                dpad_left: value.dpad_left,
+                dpad_right: value.dpad_right,
+                dpad_down: value.dpad_down,
+                dpad_up: value.dpad_up,
+            },
+            buttons_2: GcButtons2 {
+                button_start: value.button_start,
+                button_z: value.trigger_zr,
+                button_r: value.trigger_r,
+                button_l: value.trigger_l,
+                blank1: 0,
+            },
+            stick_x: value.stick_state.ax,
+            stick_y: value.stick_state.ay,
+            cstick_x: value.stick_state.cx,
+            cstick_y: value.stick_state.cy,
+            trigger_l: if value.trigger_l { 255 } else { 0 },
+            trigger_r: if value.trigger_r { 255 } else { 0 },
+        }
+    }
+}
+
 impl Default for GcState {
     fn default() -> Self {
         Self {
@@ -146,13 +179,15 @@ pub struct GcReportBuilder {
 }
 
 impl HidReportBuilder<37> for GcReportBuilder {
-    async fn get_hid_report(&mut self, state: &GcState) -> [u8; 37] {
+    async fn get_hid_report(&mut self, state: &ControllerState) -> [u8; 37] {
         let mut buffer = [0u8; 37];
 
         buffer[0] = 0x21;
         buffer[1] |= 0x14;
 
-        let data = state.pack().expect("Failed to pack GC input data");
+        let gcc_state: GcState = (*state).into();
+
+        let data = gcc_state.pack().expect("Failed to pack GC input data");
 
         if !self.gc_first {
             buffer[1] |= 0x04;

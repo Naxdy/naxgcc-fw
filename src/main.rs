@@ -89,6 +89,7 @@ fn main() -> ! {
                 spawner
                     .spawn(update_button_state_task(
                         Input::new(AnyPin::from(p.PIN_20), gpio::Pull::Up),
+                        Input::new(AnyPin::from(p.PIN_15), gpio::Pull::Up),
                         Input::new(AnyPin::from(p.PIN_17), gpio::Pull::Up),
                         Input::new(AnyPin::from(p.PIN_16), gpio::Pull::Up),
                         Input::new(AnyPin::from(p.PIN_11), gpio::Pull::Up),

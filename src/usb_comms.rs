@@ -25,7 +25,7 @@ use libm::powf;
 use crate::{
     config::{ControllerMode, InputConsistencyMode},
     hid::{
-        gcc::{GcReportBuilder, GcState, GccRequestHandler, GCC_REPORT_DESCRIPTOR},
+        gcc::{GcReportBuilder, GccRequestHandler, GCC_REPORT_DESCRIPTOR},
         procon::{ProconReportBuilder, ProconRequestHandler, PROCON_REPORT_DESCRIPTOR},
         xinput::{
             XInputReaderWriter, XInputReportBuilder, XInputRequestHandler, XInputState,
@@ -33,7 +33,7 @@ use crate::{
         },
         HidReaderWriterSplit, UsbReader, UsbWriter,
     },
-    input::CHANNEL_GCC_STATE,
+    input::{ControllerState, CHANNEL_CONTROLLER_STATE},
 };
 
 pub static SIGNAL_RUMBLE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
@@ -56,7 +56,7 @@ pub static MUTEX_CONTROLLER_MODE: Mutex<CriticalSectionRawMutex, Option<Controll
 const DEVICE_INTERFACE_GUID: &str = "{ecceff35-146c-4ff3-acd9-8f992d09acdd}";
 
 pub trait HidReportBuilder<const LEN: usize> {
-    async fn get_hid_report(&mut self, state: &GcState) -> [u8; LEN];
+    async fn get_hid_report(&mut self, state: &ControllerState) -> [u8; LEN];
 }
 
 struct UsbConfig {
@@ -216,7 +216,7 @@ where
     };
 
     let in_fut = async move {
-        let mut gcc_subscriber = CHANNEL_GCC_STATE.subscriber().unwrap();
+        let mut gcc_subscriber = CHANNEL_CONTROLLER_STATE.subscriber().unwrap();
 
         let mut last_report_time = Instant::now();
         let mut rate_limit_end_time = Instant::now();
