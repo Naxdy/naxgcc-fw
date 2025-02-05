@@ -224,7 +224,7 @@ async fn update_stick_states(
 
         let loop_end = Instant::now();
 
-        done = loop_end >= end_time - (loop_end - loop_start);
+        done = loop_end >= end_time - (loop_end - loop_start) && adc_count >= 4;
     }
 
     trace!("ADC Count: {}", adc_count);
